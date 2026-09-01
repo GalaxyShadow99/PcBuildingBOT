@@ -14,7 +14,7 @@ class LeBonCoinScraper:
     et extrayant les données depuis le bloc __NEXT_DATA__ par découpage de texte.
     """
     
-    async def scrape(self, query: str, category: int = 15, maxPages: int = 2, browser=None) -> list:
+    async def scrape(self, query: str, category: int = 15, maxPages: int = 1, browser=None) -> list:
         logger.info("[LBC-Scraper] Recherche en cours : '%s' (%s pages max)", query, maxPages)
         try:
             if browser is None:
