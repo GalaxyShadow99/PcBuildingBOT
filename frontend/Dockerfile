@@ -13,4 +13,4 @@ RUN uv pip install --system -r requirements.txt \
 COPY . .
 EXPOSE 9000
 
-CMD ["uvicorn", "frontend:app", "--host", "0.0.0.0", "--port", "9000"]
+CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:9000", "frontend:app"]
