@@ -1,0 +1,27 @@
+<div class="card mb-4 shadow-sm">
+    <div class="card-header bg-white fw-bold">
+        Ajouter un produit à surveiller
+    </div>
+    <div class="card-body">
+        <form action="/watchlist/add" method="POST">
+            <div class="mb-3">
+                <label for="keywords" class="form-label text-secondary small fw-bold">Mots-clés</label>
+                <input type="text" id="keywords" name="keywords" required placeholder="ex: RTX 3070" class="form-control form-control-sm">
+            </div>
+            <div class="mb-3">
+                <label for="max_price" class="form-label text-secondary small fw-bold">Prix Maximum (€)</label>
+                <input type="number" step="5" start="20" id="max_price" name="max_price" required placeholder="ex: 220" class="form-control form-control-sm">
+            </div>
+            <div class="mb-3">
+                <label for="category" class="form-label text-secondary small fw-bold">Catégorie LBC</label>
+                <select id="category" name="category" class="form-select form-select-sm">
+                    <option value="15">Informatique (15)</option>
+                    <option value="16">Consoles & Jeux vidéo (16)</option>
+                    <option value="9">Téléphonie (9)</option>
+                    <option value="22">Image & Son (22)</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-success btn-sm w-100 d-block">Ajouter à la Watchlist</button>
+        </form>
+    </div>
+</div>

@@ -1,0 +1,43 @@
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+    <div class="container">
+        <a class="navbar-brand d-flex align-items-center gap-2" href="/">
+            <style>
+                span{
+                    color: #fff;
+                }
+            </style>
+            <span>LBCBot</span>
+            <span class="badge bg-dark border border-secondary text-secondary-emphasis font-monospace d-none d-sm-inline-flex align-items-center gap-1 py-1 px-2" style="font-size: 0.6rem; font-weight: normal;">
+                <span>LBC :</span>
+                <span class="rounded-circle {{ 'bg-success' if health.leboncoin.status == 'OK' else 'bg-danger' if 'Bloqué' in health.leboncoin.status else 'bg-warning' }}" style="width: 7px; height: 7px; display: inline-block;" title="Leboncoin : {{ health.leboncoin.status }}"></span>
+                <span class="ms-2">Vinted :</span>
+                <span class="rounded-circle {{ 'bg-success' if health.vinted.status == 'OK' else 'bg-danger' if 'Bloqué' in health.vinted.status else 'bg-warning' }}" style="width: 7px; height: 7px; display: inline-block;" title="Vinted : {{ health.vinted.status }}"></span>
+            </span>
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                <li class="nav-item">
+                    <a class="nav-link" href="/">Annonces</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="/watchlist">Watchlist</a>
+                </li>
+            </ul>
+            <div class="d-flex align-items-center gap-2 ms-auto">
+                <form action="/scan" method="POST" class="m-0">
+                    <button type="submit" class="btn btn-primary btn-sm">Scraper Maintenant</button>
+                </form>
+                <form action="/purgeDB" method="POST" class="m-0" onsubmit="return confirm('Voulez-vous vraiment vider tout l\'historique des annonces ?');">
+                    <button type="submit" class="btn btn-danger btn-sm">Vider la base</button>
+                </form>
+                {% if session.get('loggedin') %}
+                    <a href="/logout" class="btn btn-outline-light btn-sm ms-2">Déconnexion</a>
+                {% endif %}
+            </div>
+
+        </div>
+    </div>
+</nav>

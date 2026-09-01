@@ -1,0 +1,81 @@
+<div class="card shadow-sm">
+    <div class="card-header bg-white fw-bold">
+        Recherches Actives
+    </div>
+    <div class="card-body p-0">
+        {% if watchlist %}
+            <ul class="list-group list-group-flush">
+                {% for item in watchlist %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <div class="d-flex align-items-center gap-2">
+                            <form action="/watchlist/toggle/{{ item.id }}" method="POST" class="m-0">
+                                <button type="submit" class="badge {{ 'bg-success' if item.enabled else 'bg-secondary' }} border-0 text-white" style="font-size: 0.65rem; cursor: pointer;" title="Cliquer pour changer le statut">
+                                    {{ 'Actif' if item.enabled else 'Inactif' }}
+                                </button>
+                            </form>
+                            <div>
+                                <div class="fw-bold text-dark small {% if not item.enabled %}text-decoration-line-through text-muted{% endif %}">{{ item.keywords }}</div>
+                                <small class="text-muted" style="font-size: 0.75rem;">Max : {{ item.maxPrice }} € | Cat : {{ item.category }}</small>
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-1 ms-auto">
+                            <!-- Bouton Modifier (déclenche le Modal) -->
+                            <button type="button" class="btn btn-outline-primary btn-sm py-0 px-2" style="font-size: 0.7rem;" data-bs-toggle="modal" data-bs-target="#editModal{{ item.id }}">
+                                Modifier
+                            </button>
+                            
+                            <form action="/watchlist/purge-discord/{{ item.id }}" method="POST" class="m-0" onsubmit="return confirm('Voulez-vous supprimer toutes les alertes Discord de cette recherche ?');">
+                                <button type="submit" class="btn btn-outline-warning text-dark btn-sm py-0 px-2" style="font-size: 0.7rem;">Purger Discord</button>
+                            </form>
+                            <form action="/watchlist/delete/{{ item.id }}" method="POST" class="m-0" onsubmit="return confirm('Voulez-vous supprimer cette recherche ? Ses alertes Discord associées seront automatiquement supprimées du salon.');">
+                                <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-2" style="font-size: 0.7rem;">Supprimer</button>
+                            </form>
+                        </div>
+                    </li>
+
+                    <!-- Modal de Modification pour chaque recherche -->
+                    <div class="modal fade" id="editModal{{ item.id }}" tabindex="-1" aria-labelledby="editModalLabel{{ item.id }}" aria-hidden="true">
+                        <div class="modal-dialog modal-dialog-centered">
+                            <div class="modal-content text-start">
+                                <div class="modal-header bg-dark text-white py-2">
+                                    <h6 class="modal-title fw-bold" id="editModalLabel{{ item.id }}">Modifier la recherche</h6>
+                                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" style="padding: 0.5rem;"></button>
+                                </div>
+                                <form action="/watchlist/edit/{{ item.id }}" method="POST">
+                                    <div class="modal-body py-3">
+                                        <div class="mb-3">
+                                            <label for="keywords{{ item.id }}" class="form-label text-secondary small fw-bold">Mots-clés</label>
+                                            <input type="text" class="form-control form-control-sm" id="keywords{{ item.id }}" name="keywords" value="{{ item.keywords }}" required>
+                                        </div>
+                                        <div class="mb-2 row g-2">
+                                            <div class="col-6">
+                                                <label for="maxPrice{{ item.id }}" class="form-label text-secondary small fw-bold">Prix maximum (€)</label>
+                                                <input type="number" step="5" class="form-control form-control-sm" id="maxPrice{{ item.id }}" name="max_price" value="{{ item.maxPrice }}" required>
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="category{{ item.id }}" class="form-label text-secondary small fw-bold">Catégorie LBC</label>
+                                                <input type="number" class="form-control form-control-sm" id="category{{ item.id }}" name="category" value="{{ item.category }}" required>
+                                            </div>
+                                        </div>
+                                        <div class="form-check form-switch mt-2">
+                                            <input class="form-check-input" type="checkbox" id="enabled{{ item.id }}" name="enabled" {% if item.enabled %}checked{% endif %}>
+                                            <label class="form-check-label text-secondary small fw-bold" for="enabled{{ item.id }}">Activer la surveillance</label>
+                                        </div>
+                                    </div>
+                                    <div class="modal-footer py-1">
+                                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+                                        <button type="submit" class="btn btn-dark btn-sm fw-bold">Sauvegarder</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <div class="p-3 text-center text-muted small italic">
+                Aucune surveillance active.
+            </div>
+        {% endif %}
+    </div>
+</div>

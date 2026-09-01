@@ -1,0 +1,40 @@
+services:
+  backend:
+    env_file:
+      - .env
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lbcbot_backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_PATH=/app/data/database.db
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+    volumes:
+      - ./data:/app/data  # Stockage persistant de la base de données
+    ports:
+      - "8000:8000"
+    ipc: host # Recommandé pour éviter tout blocage de mémoire avec Camoufox
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: lbcbot_frontend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "5000:5000"
+    depends_on:
+      - backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

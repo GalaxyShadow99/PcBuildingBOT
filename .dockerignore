@@ -1,0 +1,7 @@
+venv/
+data/
+database.db
+debug*.html
+__pycache__/
+*.pyc
+.git/

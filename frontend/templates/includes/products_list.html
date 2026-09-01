@@ -1,0 +1,132 @@
+<div class="card shadow-sm h-100">
+    <div class="card-header bg-white d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-2 py-2">
+        <span class="fw-bold">Dernières Annonces Notifiées</span>
+        
+        <!-- Filtre de provenance (Site) -->
+        <div class="btn-group btn-group-sm" role="group" aria-label="Filtres de provenance">
+            <button type="button" class="btn btn-outline-secondary btn-sm active" id="btn-site-all" onclick="filterProductsBySite('all', this)">Tout</button>
+            <button type="button" class="btn btn-outline-warning text-dark btn-sm" onclick="filterProductsBySite('leboncoin', this)">LeBonCoin</button>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterProductsBySite('vinted', this)">Vinted</button>
+        </div>
+    </div>
+    
+    <!-- Filtres par Recherche (Injectés dynamiquement en JS) -->
+    <div class="bg-light border-bottom px-3 py-2">
+        <small class="text-secondary d-block mb-1 fw-bold" style="font-size: 0.7rem;">Filtrer par recherche :</small>
+        <div class="d-flex flex-wrap gap-1" id="query-filters">
+            <button type="button" class="btn btn-dark btn-sm py-0 px-2" style="font-size: 0.75rem;" id="btn-query-all" onclick="filterProductsByQuery('all', this)">Toutes</button>
+        </div>
+    </div>
+
+    <div class="card-body">
+        {% if products %}
+            <div class="row row-cols-1 row-cols-md-2 g-3">
+                {% for product in products %}
+                    <div class="col product-card" data-site="{{ product.site }}" data-query="{{ product.query }}">
+                        <div class="card h-100 border-light bg-light shadow-xs">
+                            <div class="row g-0 align-items-center">
+                                <div class="col-4 p-2">
+                                    {% if product.imageUrl %}
+                                        <img src="{{ product.imageUrl }}" alt="{{ product.title }}" class="img-fluid rounded" style="max-height: 80px; width: 100%; object-fit: cover;">
+                                    {% else %}
+                                        <div class="bg-secondary-subtle text-center py-4 rounded text-muted small" style="font-size: 0.75rem;">Pas d'image</div>
+                                    {% endif %}
+                                </div>
+                                <div class="col-8">
+                                    <div class="card-body py-2">
+                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                            <span class="badge {{ 'bg-warning text-dark' if product.site == 'leboncoin' else 'bg-primary' }}" style="font-size: 0.65rem;">
+                                                {{ product.site }}
+                                            </span>
+                                            <span class="badge bg-secondary-subtle text-secondary border font-monospace" style="font-size: 0.6rem; font-weight: normal;" title="Recherche parente">
+                                                {{ product.query }}
+                                            </span>
+                                        </div>
+                                        <h6 class="card-title mb-1 text-truncate" style="font-size: 0.85rem;" title="{{ product.title }}">
+                                            <a href="{{ product.url }}" target="_blank" class="text-decoration-none fw-bold text-dark">
+                                                {{ product.title }}
+                                            </a>
+                                        </h6>
+                                        <p class="card-text mb-0 fw-bold text-primary" style="font-size: 0.9rem;">{{ product.price }} €</p>
+                                        <p class="card-text mb-0"><small class="text-muted" style="font-size: 0.7rem;">{{ product.notifiedAt.split('T')[0] }} à {{ product.notifiedAt.split('T')[1][:5] }}</small></p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="text-center py-5 text-muted small">
+                <p class="mb-0">Aucune annonce notifiée pour le moment.</p>
+                <small>Les annonces apparaîtront dès qu'une opportunité sera détectée.</small>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+let activeSiteFilter = 'all';
+let activeQueryFilter = 'all';
+
+// Générer dynamiquement les boutons de filtres de recherches à partir des cartes présentes
+document.addEventListener("DOMContentLoaded", () => {
+    const filterContainer = document.getElementById("query-filters");
+    if (!filterContainer) return;
+    
+    const cards = document.querySelectorAll(".product-card");
+    const uniqueQueries = new Set();
+    cards.forEach(card => {
+        const q = card.getAttribute("data-query");
+        if (q) uniqueQueries.add(q);
+    });
+    
+    uniqueQueries.forEach(q => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn btn-outline-secondary btn-sm py-0 px-2";
+        btn.style.fontSize = "0.75rem";
+        btn.textContent = q;
+        btn.onclick = function() { filterProductsByQuery(q, this); };
+        filterContainer.appendChild(btn);
+    });
+});
+
+function filterProductsBySite(site, btn) {
+    // Mettre à jour l'état actif sur les boutons de site
+    const buttons = btn.parentElement.querySelectorAll('button');
+    buttons.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    
+    activeSiteFilter = site;
+    applyCombinedFilters();
+}
+
+function filterProductsByQuery(query, btn) {
+    // Mettre à jour l'état actif sur les boutons de recherche
+    const buttons = document.getElementById("query-filters").querySelectorAll("button");
+    buttons.forEach(b => {
+        b.classList.remove('btn-dark', 'active');
+        b.classList.add('btn-outline-secondary');
+    });
+    btn.classList.add('btn-dark', 'active');
+    btn.classList.remove('btn-outline-secondary');
+    
+    activeQueryFilter = query;
+    applyCombinedFilters();
+}
+
+function applyCombinedFilters() {
+    const cards = document.querySelectorAll('.product-card');
+    cards.forEach(card => {
+        const matchesSite = (activeSiteFilter === 'all' || card.getAttribute('data-site') === activeSiteFilter);
+        const matchesQuery = (activeQueryFilter === 'all' || card.getAttribute('data-query') === activeQueryFilter);
+        
+        if (matchesSite && matchesQuery) {
+            card.classList.remove('d-none');
+        } else {
+            card.classList.add('d-none');
+        }
+    });
+}
+</script>
