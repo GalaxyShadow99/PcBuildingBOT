@@ -1,28 +1,23 @@
 FROM python:3.12-slim
-
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 
-# Installation de curl, puis nettoyage immédiat du cache APT
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Variables d'opti UV
+ENV UV_SYSTEM_PYTHON=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_NO_CACHE=1
 
 COPY requirements.txt .
+RUN uv pip install --system -r requirements.txt
 
-# Installation des dépendances Python via pip classique (sans cache pour gagner de la place)
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Installation des paquets système de Firefox + Nettoyage du cache APT
+#  dépendances requises par Camoufox
 RUN playwright install-deps firefox \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/* /root/.cache /root/.uv
 
-# Télécharger le binaire Firefox personnalisé anti-détection de Camoufox
+# Téléchargement du binaire Camoufox
 RUN python -m camoufox fetch
-
 COPY . .
-
-# Dossier de stockage pour la base de données
 RUN mkdir -p /app/data
 
 EXPOSE 8000
