@@ -65,7 +65,7 @@ docker-compose up -d --build
 ```
 
 L'application sera accessible sur :
-- **Dashboard Web (Frontend) :** `http://localhost:5000`
+- **Dashboard Web (Frontend) :** `http://localhost:9000`
 - **API Backend (FastAPI) :** `http://localhost:8000`
 
 ---
