@@ -50,7 +50,7 @@ def deleteDiscordMessage(webhookUrl: str, messageId: str) -> bool:
             try:
                 retry_after = float(response.json().get("retry_after", 1.0))
             except Exception:
-                retry_after = 1.0
+                retry_after = 4.0
             logger.warning("Rate limited par Discord. Attente de %s secondes...", retry_after)
             import time
             time.sleep(retry_after)

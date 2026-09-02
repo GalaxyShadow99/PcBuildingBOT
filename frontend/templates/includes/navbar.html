@@ -9,9 +9,9 @@
             <span>LBCBot</span>
             <span class="badge bg-dark border border-secondary text-secondary-emphasis font-monospace d-none d-sm-inline-flex align-items-center gap-1 py-1 px-2" style="font-size: 0.6rem; font-weight: normal;">
                 <span>LBC :</span>
-                <span class="rounded-circle {{ 'bg-success' if health.leboncoin.status == 'OK' else 'bg-danger' if 'Bloqué' in health.leboncoin.status else 'bg-warning' }}" style="width: 7px; height: 7px; display: inline-block;" title="Leboncoin : {{ health.leboncoin.status }}"></span>
+                <span id="lbc-status-dot" class="rounded-circle {{ 'bg-success' if health.leboncoin.status == 'OK' else 'bg-danger' if 'Bloqué' in health.leboncoin.status else 'bg-warning' }}" style="width: 7px; height: 7px; display: inline-block;" title="Leboncoin : {{ health.leboncoin.status }}"></span>
                 <span class="ms-2">Vinted :</span>
-                <span class="rounded-circle {{ 'bg-success' if health.vinted.status == 'OK' else 'bg-danger' if 'Bloqué' in health.vinted.status else 'bg-warning' }}" style="width: 7px; height: 7px; display: inline-block;" title="Vinted : {{ health.vinted.status }}"></span>
+                <span id="vinted-status-dot" class="rounded-circle {{ 'bg-success' if health.vinted.status == 'OK' else 'bg-danger' if 'Bloqué' in health.vinted.status else 'bg-warning' }}" style="width: 7px; height: 7px; display: inline-block;" title="Vinted : {{ health.vinted.status }}"></span>
             </span>
         </a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
@@ -41,3 +41,28 @@
         </div>
     </div>
 </nav>
+
+<script>
+function refreshHealthStatus() {
+    fetch('/api/health')
+        .then(response => response.json())
+        .then(data => {
+            if (data && data.leboncoin) {
+                const lbcDot = document.getElementById('lbc-status-dot');
+                if (lbcDot) {
+                    lbcDot.className = 'rounded-circle ' + (data.leboncoin.status === 'OK' ? 'bg-success' : (data.leboncoin.status.includes('Bloqué') ? 'bg-danger' : 'bg-warning'));
+                    lbcDot.title = 'Leboncoin : ' + data.leboncoin.status;
+                }
+            }
+            if (data && data.vinted) {
+                const vintedDot = document.getElementById('vinted-status-dot');
+                if (vintedDot) {
+                    vintedDot.className = 'rounded-circle ' + (data.vinted.status === 'OK' ? 'bg-success' : (data.vinted.status.includes('Bloqué') ? 'bg-danger' : 'bg-warning'));
+                    vintedDot.title = 'Vinted : ' + data.vinted.status;
+                }
+            }
+        })
+        .catch(err => console.error('Erreur rafraîchissement santé:', err));
+}
+setInterval(refreshHealthStatus, 30000);
+</script>

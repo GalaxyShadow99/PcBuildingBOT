@@ -21,6 +21,65 @@
                     <option value="22">Image & Son (22)</option>
                 </select>
             </div>
+            <div class="mb-3">
+                <label for="custom_banned_words" class="form-label text-secondary small fw-bold">Mots-clés à exclure (séparés par des virgules)</label>
+                <input type="text" id="custom_banned_words" name="custom_banned_words" placeholder="ex: ventirad, waterblock, hs, boite" class="form-control form-control-sm">
+                
+                <!-- Suggestions interactives rapides issues de l'API / BDD -->
+                <div class="mt-2" id="preset-container">
+                    <small class="text-muted d-block mb-1" style="font-size: 0.7rem;">Suggestions rapides par catégorie (cliquez pour ajouter) :</small>
+                    <div class="d-flex flex-wrap gap-1 mb-2">
+                        {% if presets %}
+                            {% for cat, words in presets.items() %}
+                                <button type="button" class="btn btn-outline-secondary btn-xs py-0 px-1 border text-capitalize" style="font-size: 0.68rem;" onclick="addBannedPreset('custom_banned_words', '{{ words | join(', ') }}')">
+                                    + {{ cat }} ({{ words | length }})
+                                </button>
+                            {% endfor %}
+                        {% else %}
+                            <button type="button" class="btn btn-outline-secondary btn-xs py-0 px-1 border" style="font-size: 0.68rem;" onclick="addBannedPreset('custom_banned_words', 'waterblock, watercooling, dissipateur')">+ Refroidissement</button>
+                            <button type="button" class="btn btn-outline-secondary btn-xs py-0 px-1 border" style="font-size: 0.68rem;" onclick="addBannedPreset('custom_banned_words', 'sodimm, laptop, portable')">+ RAM Laptop</button>
+                            <button type="button" class="btn btn-outline-secondary btn-xs py-0 px-1 border" style="font-size: 0.68rem;" onclick="addBannedPreset('custom_banned_words', 'ecc, registered, rdimm, serveur')">+ Serveur/ECC</button>
+                            <button type="button" class="btn btn-outline-secondary btn-xs py-0 px-1 border" style="font-size: 0.68rem;" onclick="addBannedPreset('custom_banned_words', 'boite, packaging, emballage')">+ Boîte seule</button>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Explication des catégories & utilisation -->
+                <div class="card bg-light border-0 p-2 mb-2" style="font-size: 0.7rem;">
+                    <div class="fw-bold text-dark mb-1">💡 Guide des filtres & catégories :</div>
+                    <ul class="ps-3 mb-1 text-muted" style="line-height: 1.3;">
+                        <li><strong>Build-Complet :</strong> Exclut les configurations et PC entiers (ex: <i>"unité centrale", "pc complet"</i>). Utile quand vous ne cherchez qu'un seul composant.</li>
+                        <li><strong>cooling :</strong> Filtre les ventirads, AIO et waterblocks (ex: <i>waterblock, kühler, dissipateur</i>). Pratique pour les recherches GPU/CPU.</li>
+                        <li><strong>ram_laptop :</strong> Élimine la mémoire pour ordinateur portable (ex: <i>sodimm, so-dimm, ram portable</i>). Ideal quand vous cherchez de la RAM PC fixe.</li>
+                        <li><strong>server :</strong> Rejette la mémoire et matériel professionnel serveur (ex: <i>ecc, registered, rdimm</i>).</li>
+                        <li><strong>packaging / broken :</strong> Filtre les emballages vides (<i>caja, box, leere verpackung</i>) ou le matériel en panne / HS (<i>defekt, para piezas, pour pièces</i>).</li>
+                    </ul>
+                    <span class="text-secondary italic">👉 <strong>Astuce :</strong> Cliquez sur un bouton ci-dessus pour ajouter automatiquement la catégorie complète de mots bannis dans le champ !</span>
+                </div>
+                
+                <div class="form-text" style="font-size: 0.7rem;">Si l'un de ces mots apparaît dans le titre de l'annonce, elle sera ignorée.</div>
+            </div>
+
+            <script>
+            function addBannedPreset(inputId, wordsString) {
+                const input = document.getElementById(inputId);
+                if (!input) return;
+                let current = input.value.trim();
+                const newWords = wordsString.split(',').map(w => w.strip ? w.strip() : w.trim());
+                
+                let existing = current ? current.split(',').map(w => w.trim()) : [];
+                newWords.forEach(w => {
+                    if (!existing.includes(w)) {
+                        existing.push(w);
+                    }
+                });
+                input.value = existing.join(', ');
+            }
+            </script>
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="use_default_banned_words" name="use_default_banned_words" checked>
+                <label class="form-check-label text-secondary small fw-bold" for="use_default_banned_words">Activer les filtres globaux par défaut (HS, emballages, accessoires généralistes)</label>
+            </div>
             <button type="submit" class="btn btn-success btn-sm w-100 d-block">Ajouter à la Watchlist</button>
         </form>
     </div>

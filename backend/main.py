@@ -2,12 +2,14 @@ import asyncio
 import json
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from random import randint
 from typing import Any
 
 import uvicorn
+from camoufox.async_api import AsyncCamoufox
 from database import *
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Security
 from fastapi.exceptions import RequestValidationError
@@ -19,21 +21,28 @@ from notifier import deleteDiscordMessage, sendDiscordNotification
 from pydantic import BaseModel
 from scrapers import LeBonCoinScraper, VintedScraper
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from dotenv import load_dotenv
 
+load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialisation de la base SQLite
     initDb()
     # Lancement de la tâche de fond de surveillance périodique
-    task = asyncio.create_task(runPeriodicScans())
+    task_scan = asyncio.create_task(runPeriodicScans())
+    task_health = asyncio.create_task(runPeriodicHealthCheck())
     yield
-    task.cancel()
+    task_scan.cancel()
+    task_health.cancel()
 
 app = FastAPI(title="LBCBot API", lifespan=lifespan)
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "")
+MAX_PAGES_PER_SITE = int(os.environ.get("MAX_PAGES_PER_SITE", "1"))
+if not MAX_PAGES_PER_SITE:
+    logger.fatal("MAX_PAGES_PER_SITE doit être un entier positif. Valeur actuelle : %s", MAX_PAGES_PER_SITE)
+    sys.exit(1)
 if not API_SECRET_KEY:
     logger.fatal("Aucune clé API définie. Les appels POST/DELETE seront refusés.")
     sys.exit(1)
@@ -92,6 +101,58 @@ def updateHealth(site: str, status: str, error_msg: str = None, cooldown_mins: i
         "cooldown_until": cooldown_until
     }
 
+async def updateHealthAuto():
+    """
+    Effectue un ping de test réseau sur les scrapers qui sont en statut d'erreur ou de blocage (non OK).
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    
+    # 1. Ping Vinted uniquement s'il n'est pas OK
+    if SCRAPER_HEALTH["vinted"]["status"] != "OK":
+        logger.info("[Ping Test] Test de connexion réseau en cours sur Vinted...")
+        try:
+            import httpx
+            async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=5) as client:
+                res = await client.get("https://www.vinted.fr")
+                if res.status_code == 200:
+                    updateHealth("vinted", "OK")
+                    logger.info("[Ping Test] Vinted accessible (HTTP 200) ! Statut rétabli à OK.")
+                elif res.status_code == 403:
+                    updateHealth("vinted", "Bloqué (403)", "Code HTTP 403 sur le ping de test", cooldown_mins=30)
+                    logger.warning("[Ping Test] Vinted toujours bloqué (HTTP 403). Cooldown maintenu.")
+        except Exception as e:
+            logger.error("[Ping Test] Échec du ping Vinted : %s", e)
+
+    # 2. Ping LeBonCoin uniquement s'il n'est pas OK
+    if SCRAPER_HEALTH["leboncoin"]["status"] != "OK":
+        logger.info("[Ping Test] Test de connexion réseau en cours sur LeBonCoin via Camoufox...")
+        try:
+            from camoufox.async_api import AsyncCamoufox
+            async with AsyncCamoufox(headless=True) as browser:
+                page = await browser.new_page()
+                res = await page.goto("https://www.leboncoin.fr/recherche?category=15&text=rtx", wait_until="domcontentloaded", timeout=15000)
+                if res and res.status == 200:
+                    updateHealth("leboncoin", "OK")
+                    logger.info("[Ping Test] LeBonCoin accessible (HTTP 200) ! Statut rétabli à OK.")
+                elif res and res.status == 403:
+                    updateHealth("leboncoin", "Bloqué (403)", "Code HTTP 403 sur le ping de test", cooldown_mins=30)
+                    logger.warning("[Ping Test] LeBonCoin toujours bloqué (HTTP 403). Cooldown maintenu.")
+                await page.close()
+        except Exception as e:
+            logger.error("[Ping Test] Échec du ping LeBonCoin : %s", e)
+
+async def runPeriodicHealthCheck():
+    """Tâche de fond qui teste la santé des scrapers toutes les 5 minutes."""
+    while True:
+        try:
+            await updateHealthAuto()
+        except Exception as e:
+            logger.error("Erreur dans le healthcheck automatique : %s", e)
+        await asyncio.sleep(5 * 60)
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request, exc):
     return JSONResponse(
@@ -119,12 +180,16 @@ class WatchlistCreate(BaseModel):
     keywords: str
     maxPrice: float
     category: int = 15
+    useDefaultBannedWords: bool = True
+    customBannedWords: list[str] = []
 
 class WatchlistUpdate(BaseModel):
     keywords: str
     maxPrice: float
     category: int = 15
     enabled: bool = True
+    useDefaultBannedWords: bool = True
+    customBannedWords: list[str] = []
 
 # Instanciation des scrapers
 lbcScraper = LeBonCoinScraper()
@@ -198,20 +263,34 @@ async def runScan(force: bool = False):
     # Récupération des recherches actives en unpacking de tuples
     conn = getDbConnection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, keywords, maxPrice, category FROM watchlist WHERE enabled = 1")
+    cursor.execute("SELECT id, keywords, maxPrice, category, useDefaultBannedWords FROM watchlist WHERE enabled = 1")
     activeItems = cursor.fetchall()
+    
+    # Récupération des mots bannis globaux/par défaut
+    cursor.execute("SELECT word FROM default_banned_words")
+    defaultBannedWords = [row[0].lower() for row in cursor.fetchall()]
     conn.close()
     
     if not activeItems:
         logger.info("Aucune recherche active dans la watchlist.")
         return
- 
-    from camoufox.async_api import AsyncCamoufox
-    
+     
     # On ouvre le navigateur Camoufox UNE SEULE fois pour tout le cycle de scan LBC
     async with AsyncCamoufox(headless=True) as browser:
-        for itemId, keywords, maxPrice, category in activeItems:
+        for itemId, keywords, maxPrice, category, useDefaultBannedWords in activeItems:
             logger.info("Scan de '%s' (max %s€)...", keywords, maxPrice)
+            
+            # Récupération des mots bannis spécifiques pour cette recherche
+            conn = getDbConnection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT word FROM watchlist_banned_words WHERE watchlistId = ?", (itemId,))
+            customBannedWords = [row[0].lower() for row in cursor.fetchall()]
+            conn.close()
+            
+            # Construction de la banlist finale pour cet élément
+            bannedWords = list(customBannedWords)
+            if useDefaultBannedWords:
+                bannedWords.extend(defaultBannedWords)
             
             # Scraping asynchrone sécurisé pour le health check (LeBonCoin)
             is_lbc_cooldown = False
@@ -224,7 +303,7 @@ async def runScan(force: bool = False):
             
             if not is_lbc_cooldown:
                 try:
-                    lbcAds = await lbcScraper.scrape(keywords, category, browser=browser)
+                    lbcAds = await lbcScraper.scrape(keywords, category, browser=browser,maxPages=MAX_PAGES_PER_SITE)
                     updateHealth("leboncoin", "OK")
                 except Exception as e:
                     logger.error("[Scan LBC] Échec : %s", e)
@@ -246,7 +325,7 @@ async def runScan(force: bool = False):
             
             if not is_vinted_cooldown:
                 try:
-                    vintedAds = await vintedScraper.scrape(keywords, maxPrice=maxPrice)
+                    vintedAds = await vintedScraper.scrape(keywords, maxPrice=maxPrice, maxPages=MAX_PAGES_PER_SITE)
                     updateHealth("vinted", "OK")
                 except Exception as e:
                     logger.error("[Scan Vinted] Échec : %s", e)
@@ -269,8 +348,8 @@ async def runScan(force: bool = False):
                 if ad.price > maxPrice:
                     continue
                     
-                # Détection et chargement forcé de la description LBC si le prix est suspect (< 40% du prix max)
-                is_suspicious_price = maxPrice is not None and ad.price < (0.4 * maxPrice)
+                # Détection et chargement forcé de la description LBC si le prix est suspect (< 30% du prix max)
+                is_suspicious_price = maxPrice is not None and ad.price < (0.3 * maxPrice)
                 if is_suspicious_price and ad.site == "leboncoin" and not ad.description:
                     logger.info("Prix suspect LBC détecté (%s€). Chargement de la description pour vérification...", ad.price)
                     ad.description = await fetchLbcDescription(ad.url, browser)
@@ -280,40 +359,22 @@ async def runScan(force: bool = False):
                     logger.warning("[Filtre HS/Boîte] Annonce de matériel défectueux ou emballage ignorée : '%s'", ad.title)
                     continue
     
-                # 1b. Exclusion des annonces contenant des mots bannis (PC complet, config, laptops, CPU...)
+                # 1b. Exclusion dynamique via banlist (globale + spécifique)
                 titleLower = ad.title.lower()
                 queryLower = keywords.lower()
-                bannedWords = [
-                    "pc", "ordinateur", "setup", "config", "tour", "unite centrale", "unité centrale", 
-                    "complet", "laptop", "portable", "bureautique", "génération", "generation",
-                    "i3", "i5", "i7", "i9", "ryzen 3", "ryzen 5", "ryzen 7", "ryzen 9",
-                    # Accessoires (à exclure sauf si explicitement recherchés)
-                    "ventirad", "cooler", "ventilateur", "ventilador", "fan", "disipador", "dissipatore", 
-                    "support", "suporte", "bracket", "holder", "watercooling", "heatsink", "dissipateur",
-                    "backplate", "ventola", "kühler", "kuhler", "lüfter", "lufter", "ventilatore",
-                    "radiateur", "radiador", "waterblock", "water block", "koeler", "koelers",
-                    # Logiciels / Guides / CD
-                    "dvd", "driver", "drivers", "manual", "manuel", "cd-rom", "cdrom",
-                    # Réparations / Pannes à l'étranger
-                    "arreglar", "reparar", "rot", "defekt", "defective", "broken"
-                ]
                 
-                isBanned = False
+                banned_match = None
                 for word in bannedWords:
-                    # Si le mot banni est dans le titre ET n'était pas recherché par l'utilisateur
-                    if word in titleLower and word not in queryLower:
-                        if word == "pc":
-                            # Pour "pc" (mot entier uniquement) : évite de bloquer "pcie", "pci" etc.
-                            paddedTitle = f" {titleLower} "
-                            if " pc " in paddedTitle:
-                                isBanned = True
-                                break
-                        else:
-                            isBanned = True
-                            break
+                    wordLower = word.lower().strip()
+                    if not wordLower:
+                        continue
+                    # Si le mot banni est présent et n'était pas recherché par l'utilisateur
+                    if wordLower in titleLower and wordLower not in queryLower:
+                        banned_match = wordLower
+                        break
                             
-                if isBanned:
-                    logger.warning("[Filtre] Annonce contenant un mot banni (%s) ignorée : '%s'", word, ad.title)
+                if banned_match:
+                    logger.warning("[Filtre Banword] Annonce contenant le mot banni (%s) ignorée : '%s'", banned_match, ad.title)
                     continue
     
                 # 1bb. Détection spécifique des boîtes / emballages vides (multi-langues)
@@ -388,17 +449,45 @@ async def runPeriodicScans():
 def getHealth():
     return apiResponse(True, data=SCRAPER_HEALTH)
 
+@app.get("/banned-words/presets")
+def getBannedWordsPresets():
+    conn = getDbConnection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT word, category FROM default_banned_words")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    presets = {}
+    for word, category in rows:
+        if category not in presets:
+            presets[category] = []
+        presets[category].append(word)
+        
+    return apiResponse(True, data=presets)
+
 @app.get("/watchlist")
 def getWatchlist():
     conn = getDbConnection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, keywords, maxPrice, category, enabled FROM watchlist")
+    cursor.execute("SELECT id, keywords, maxPrice, category, enabled, useDefaultBannedWords FROM watchlist")
     rows = cursor.fetchall()
+    
+    watchlist = []
+    for r in rows:
+        itemId = r[0]
+        cursor.execute("SELECT word FROM watchlist_banned_words WHERE watchlistId = ?", (itemId,))
+        custom_words = [w[0] for w in cursor.fetchall()]
+        watchlist.append({
+            "id": itemId,
+            "keywords": r[1],
+            "maxPrice": r[2],
+            "category": r[3],
+            "enabled": bool(r[4]),
+            "useDefaultBannedWords": bool(r[5]),
+            "customBannedWords": custom_words
+        })
+        
     conn.close()
-    watchlist = [
-        {"id": r[0], "keywords": r[1], "maxPrice": r[2], "category": r[3], "enabled": bool(r[4])}
-        for r in rows
-    ]
     return apiResponse(True, data=watchlist)
 
 @app.post("/watchlist", dependencies=[Depends(verifyApiKey)])
@@ -407,17 +496,28 @@ def addToWatchlist(data: WatchlistCreate):
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO watchlist (keywords, maxPrice, category) VALUES (?, ?, ?)",
-            (data.keywords, data.maxPrice, data.category)
+            "INSERT INTO watchlist (keywords, maxPrice, category, useDefaultBannedWords) VALUES (?, ?, ?, ?)",
+            (data.keywords, data.maxPrice, data.category, int(data.useDefaultBannedWords))
         )
         conn.commit()
         itemId = cursor.lastrowid
+        
+        # Enregistrement des mots bannis spécifiques
+        if data.customBannedWords:
+            cursor.executemany(
+                "INSERT OR IGNORE INTO watchlist_banned_words (watchlistId, word) VALUES (?, ?)",
+                [(itemId, word.strip()) for word in data.customBannedWords if word.strip()]
+            )
+            conn.commit()
+            
         watchlist_item = {
             "id": itemId,
             "keywords": data.keywords,
             "maxPrice": data.maxPrice,
             "category": data.category,
-            "enabled": True
+            "enabled": True,
+            "useDefaultBannedWords": data.useDefaultBannedWords,
+            "customBannedWords": [w.strip() for w in data.customBannedWords if w.strip()]
         }
         return apiResponse(True, data=watchlist_item)
     except Exception as e:
@@ -457,16 +557,27 @@ def updateWatchlistItem(itemId: int, data: WatchlistUpdate):
         
     try:
         cursor.execute(
-            "UPDATE watchlist SET keywords = ?, maxPrice = ?, category = ?, enabled = ? WHERE id = ?",
-            (data.keywords, data.maxPrice, data.category, int(data.enabled), itemId)
+            "UPDATE watchlist SET keywords = ?, maxPrice = ?, category = ?, enabled = ?, useDefaultBannedWords = ? WHERE id = ?",
+            (data.keywords, data.maxPrice, data.category, int(data.enabled), int(data.useDefaultBannedWords), itemId)
         )
+        
+        # Remplacement complet des mots bannis spécifiques
+        cursor.execute("DELETE FROM watchlist_banned_words WHERE watchlistId = ?", (itemId,))
+        if data.customBannedWords:
+            cursor.executemany(
+                "INSERT OR IGNORE INTO watchlist_banned_words (watchlistId, word) VALUES (?, ?)",
+                [(itemId, word.strip()) for word in data.customBannedWords if word.strip()]
+            )
+            
         conn.commit()
         return apiResponse(True, data={
             "id": itemId,
             "keywords": data.keywords,
             "maxPrice": data.maxPrice,
             "category": data.category,
-            "enabled": data.enabled
+            "enabled": data.enabled,
+            "useDefaultBannedWords": data.useDefaultBannedWords,
+            "customBannedWords": [w.strip() for w in data.customBannedWords if w.strip()]
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -486,11 +597,11 @@ def deleteFromWatchlist(itemId: int):
     cursor.execute("SELECT discordMessageId FROM products WHERE watchlistId = ? AND discordMessageId IS NOT NULL", (itemId,))
     rows = cursor.fetchall()
     if rows and DISCORD_WEBHOOK_URL:
-        logger.info("🗑️ Suppression automatique de %s messages Discord suite à la suppression de la recherche %s", len(rows), itemId)
+        logger.info("Suppression automatique de %s messages Discord suite à la suppression de la recherche %s", len(rows), itemId)
         for (msg_id,) in rows:
             deleteDiscordMessage(DISCORD_WEBHOOK_URL, msg_id)
             import time
-            time.sleep(0.2)
+            time.sleep(randint(1, 3) * 0.8)
             
     cursor.execute("DELETE FROM products WHERE watchlistId = ?", (itemId,))
     cursor.execute("DELETE FROM watchlist WHERE id = ?", (itemId,))
@@ -512,13 +623,12 @@ def purgeDiscordNotifications(itemId: int):
     
     deleted_count = 0
     if rows and DISCORD_WEBHOOK_URL:
-        logger.info("🗑️ Purge manuelle de %s messages Discord pour la recherche %s", len(rows), itemId)
+        logger.info("Purge manuelle de %s messages Discord pour la recherche %s", len(rows), itemId)
         for db_id, msg_id in rows:
             if deleteDiscordMessage(DISCORD_WEBHOOK_URL, msg_id):
                 deleted_count += 1
             cursor.execute("UPDATE products SET discordMessageId = NULL WHERE id = ?", (db_id,))
-            import time
-            time.sleep(0.2)
+            time.sleep(randint(1, 3) * 0.8)
         conn.commit()
         
     conn.close()
@@ -566,6 +676,10 @@ def purgeDatabase():
 def triggerManualScan(background_tasks: BackgroundTasks):
     background_tasks.add_task(runScan, force=True)
     return apiResponse(True, data={"status": "scan_started"})
+
+@app.get("/")
+def root():
+    return apiResponse(True, data={"message": "API is running."})
 
 if __name__ == "__main__":
     env_type = os.environ.get("ENVIRONEMENT_TYPE", "")

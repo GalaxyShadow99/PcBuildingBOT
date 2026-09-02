@@ -1,9 +1,10 @@
 import logging
 import os
+from dotenv import load_dotenv
 
-ENVIRONEMENT_TYPE = os.environ.get("ENVIRONEMENT_TYPE", "")
-if ENVIRONEMENT_TYPE == "":
-    raise ValueError("ENVIRONEMENT_TYPE is not set")
+load_dotenv()
+
+ENVIRONEMENT_TYPE = os.environ.get("ENVIRONEMENT_TYPE", "development")
 
 class CustomFormatter(logging.Formatter):
     grey = "\x1b[38;20m"

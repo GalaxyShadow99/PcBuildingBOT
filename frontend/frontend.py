@@ -5,7 +5,7 @@ import urllib.request
 from functools import wraps
 
 from dotenv import load_dotenv
-from flask import Flask, flash, redirect, render_template, request, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
 
 # Chargement du fichier .env pour le développement local
 load_dotenv()
@@ -79,6 +79,13 @@ def inject_health():
         health = res_h.get("data", {})
     return dict(health=health)
 
+@app.route("/api/health")
+def apiHealthProxy():
+    status_h, res_h = apiCall("GET", "/health")
+    if status_h == 200 and isinstance(res_h, dict):
+        return jsonify(res_h.get("data", {}))
+    return jsonify({"leboncoin": {"status": "Erreur"}, "vinted": {"status": "Erreur"}})
+
 @app.route("/")
 @login_required
 def index():
@@ -125,6 +132,8 @@ def logout():
 @login_required
 def watchlistView():
     watchlist = []
+    presets = {}
+    
     status, res = apiCall("GET", "/watchlist")
     if status == 200 and isinstance(res, dict) and res.get("success"):
         watchlist = res.get("data", [])
@@ -132,7 +141,11 @@ def watchlistView():
         error_msg = res.get("error", "Erreur inconnue") if isinstance(res, dict) else str(res)
         flash(f"Impossible de récupérer la watchlist : {error_msg}", "danger")
         
-    return render_template("watchlist.html", watchlist=watchlist)
+    p_status, p_res = apiCall("GET", "/banned-words/presets")
+    if p_status == 200 and isinstance(p_res, dict) and p_res.get("success"):
+        presets = p_res.get("data", {})
+        
+    return render_template("watchlist.html", watchlist=watchlist, presets=presets)
 
 @app.route("/watchlist/add", methods=["POST"])
 @login_required
@@ -140,6 +153,9 @@ def addWatchlist():
     keywords = request.form.get("keywords")
     maxPrice = request.form.get("max_price")
     category = request.form.get("category", 15)
+    useDefaultBannedWords = request.form.get("use_default_banned_words") == "on"
+    raw_custom_words = request.form.get("custom_banned_words", "")
+    customBannedWords = [w.strip() for w in raw_custom_words.split(",") if w.strip()]
     
     if not keywords or not maxPrice:
         flash("Veuillez renseigner tous les champs obligatoires.", "warning")
@@ -148,7 +164,9 @@ def addWatchlist():
     payload = {
         "keywords": keywords,
         "maxPrice": float(maxPrice),
-        "category": int(category)
+        "category": int(category),
+        "useDefaultBannedWords": useDefaultBannedWords,
+        "customBannedWords": customBannedWords
     }
     
     status, res = apiCall("POST", "/watchlist", payload)
@@ -179,6 +197,9 @@ def editWatchlist(itemId):
     maxPrice = request.form.get("max_price")
     category = request.form.get("category", 15)
     enabled = request.form.get("enabled") == "on"
+    useDefaultBannedWords = request.form.get("use_default_banned_words") == "on"
+    raw_custom_words = request.form.get("custom_banned_words", "")
+    customBannedWords = [w.strip() for w in raw_custom_words.split(",") if w.strip()]
     
     if not keywords or not maxPrice:
         flash("Veuillez remplir tous les champs obligatoires.", "warning")
@@ -188,7 +209,9 @@ def editWatchlist(itemId):
         "keywords": keywords,
         "maxPrice": float(maxPrice),
         "category": int(category),
-        "enabled": enabled
+        "enabled": enabled,
+        "useDefaultBannedWords": useDefaultBannedWords,
+        "customBannedWords": customBannedWords
     }
     
     status, res = apiCall("PUT", f"/watchlist/{itemId}", payload)

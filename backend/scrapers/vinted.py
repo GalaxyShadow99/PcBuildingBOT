@@ -14,7 +14,7 @@ class VintedScraper:
     pour récupérer directement le JSON depuis leur API interne.
     """
     
-    async def scrape(self, query: str, maxPrice: float = 0.0) -> list:
+    async def scrape(self, query: str, maxPrice: float = 0.0, maxPages: int = 1) -> list:
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -44,7 +44,7 @@ class VintedScraper:
                 if maxPrice != 0.0:
                     params["price_to"] = maxPrice
                     
-                for page_num in range(1, 2):
+                for page_num in range(1, maxPages + 1):
                     logger.info("   - Chargement de la page Vinted %s...", page_num)
                     params["page"] = page_num
                     
