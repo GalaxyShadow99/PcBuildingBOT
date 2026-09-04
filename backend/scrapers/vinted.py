@@ -96,20 +96,14 @@ class VintedScraper:
                         # SAUF si le prix est anormalement bas (ex: < 40% du prix max, ce qui cache souvent une boîte vide ou un accessoire)
                         is_suspicious_price = maxPrice is not None and price < (0.4 * maxPrice)
                         
-                        if title_has_all and not is_suspicious_price:
-                            formattedItems.append(scraped_item)
-                        elif title_has_all or checkTitleRelevance(title.lower(), query.lower()):
-                            # Si le titre a tous les mots mais à prix suspect, OU si le titre est générique, on force le fetch
-                            logger.info("   - Récupération de la description complète pour : '%s' (prix suspect: %s€)", title, price)
-                            await scraped_item.fetchDescription(client)
+                        if title_has_all or checkTitleRelevance(title.lower(), query.lower()):
+                            # Si le prix est suspect (< 40%), on tente d'extraire la description pour enrichir l'IA
+                            if is_suspicious_price:
+                                logger.info("   - Récupération de la description complète pour : '%s' (prix suspect: %s€)", title, price)
+                                await scraped_item.fetchDescription(client)
+                                await asyncio.sleep(randint(100, 400) / 1000.0)
                             
-                            # On valide uniquement si la description contient bien tous les mots recherchés
-                            desc_lower = (scraped_item.description or "").lower()
-                            if queryWords and all(w in desc_lower for w in queryWords):
-                                formattedItems.append(scraped_item)
-                                await asyncio.sleep(randint(100, 400) / 1000.0)  # Pause uniquement si on a fait un fetch
-                            else:
-                                logger.warning("   - Annonce rejetée (mots-clés absents de la description) : '%s'", title)
+                            formattedItems.append(scraped_item)
                         
                     # Pause entre les pages
                     await asyncio.sleep(randint(200, 600) / 1000.0)  # Pause courte en millisecondes (200ms - 600ms)

@@ -111,7 +111,7 @@ def initDb():
         pass
 
     # Purge des mots génériques trop stricts qui faisaient rater de bonnes annonces
-    cursor.execute("DELETE FROM default_banned_words WHERE word IN ('pc', 'i3', 'i5', 'i7', 'i9', 'ryzen 3', 'ryzen 5', 'ryzen 7', 'ryzen 9', 'ordinateur', 'setup', 'config', 'tour', 'laptop', 'portable', 'bureautique', 'computer', 'desktop', 'ordenador', 'portatil', 'portatile')")
+    cursor.execute("DELETE FROM default_banned_words WHERE word IN ('pc', 'i3', 'i5', 'i7', 'i9', 'ryzen 3', 'ryzen 5', 'ryzen 7', 'ryzen 9', 'ordinateur', 'setup', 'config', 'tour', 'laptop', 'portable', 'bureautique', 'computer', 'desktop', 'ordenador', 'portatil', 'portatile', 'sodimm', 'so-dimm', 'sodim', 'laptop ram', 'notebook ram', 'ram portable', 'notebook', 'portátil', 'ecc', 'registered', 'rdimm', 'server')")
     conn.commit()
 
     # Peuplement initial de la table default_banned_words si vide (FR, EN, DE, ES, IT, NL, PT)
@@ -160,9 +160,11 @@ def initDb():
             ("per parti di ricambio", "broken"), ("defetto", "broken"), ("gusto", "broken"), ("defect", "broken"),
             ("capaciteit defect", "broken"), ("avaria", "broken"), ("estragado", "broken"),
             
-            # --- Logiciels / Pilotes / Manuel ---
+            # --- Logiciels / Pilotes / Manuel / Peripheriques hors-sujet ---
             ("dvd", "software"), ("driver", "software"), ("drivers", "software"), ("manual", "software"), ("manuel", "software"),
-            ("cd-rom", "software"), ("cdrom", "software"), ("anleitung", "software"), ("handbuch", "software"), ("guia", "software"), ("guía", "software")
+            ("cd-rom", "software"), ("cdrom", "software"), ("anleitung", "software"), ("handbuch", "software"), ("guia", "software"), ("guía", "software"),
+            ("huion", "software"), ("wacom", "software"), ("xp-pen", "software"), ("xppen", "software"), ("tavoletta", "software"), ("tablette", "software"),
+            ("drawing tablet", "software"), ("grafiktablett", "software"), ("tableta grafica", "software"), ("tableta gráfica", "software")
         ]
         cursor.executemany("INSERT OR IGNORE INTO default_banned_words (word, category) VALUES (?, ?)", categorized_words)
         conn.commit()

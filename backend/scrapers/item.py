@@ -74,7 +74,7 @@ class ScrapedItem:
         pickupWords = ["pas d'envoi", "pas denvoi", "main propre", "uniquement sur place"]
         return any(word in titleLower for word in pickupWords)
 
-    def toDiscordEmbed(self, maxPrice: float, keywords: str) -> dict:
+    def toDiscordEmbed(self, maxPrice: float, keywords: str, aiAnalysis: str = None) -> dict:
         """Génère le dictionnaire de payload (embed) pour Discord."""
         siteName = self.site.capitalize()
         discount = self.getDealPercentage(maxPrice)
@@ -86,34 +86,43 @@ class ScrapedItem:
         color = 16737792 if discount >= 15 else 3447003
         shippingStatus = "⚠️ Main propre uniquement (Pas d'envoi)" if self.requiresPickup() else "Envoi possible"
         
+        fields = [
+            {
+                "name": "Prix",
+                "value": f"**{self.price} €** (Max : {maxPrice} €)",
+                "inline": True
+            },
+            {
+                "name": "Recherche",
+                "value": f"`{keywords}`",
+                "inline": True
+            },
+            {
+                "name": "Livraison",
+                "value": shippingStatus,
+                "inline": True
+            },
+            {
+                "name": "Provenance",
+                "value": siteName,
+                "inline": True
+            }
+        ]
+
+        if aiAnalysis:
+            fields.append({
+                "name": "🤖 Analyse IA (Qwen 2.5)",
+                "value": aiAnalysis,
+                "inline": False
+            })
+        
         embed = {
             "title": title,
             "url": self.url,
             "color": color,
-            "fields": [
-                {
-                    "name": "Prix",
-                    "value": f"**{self.price} €** (Max : {maxPrice} €)",
-                    "inline": True
-                },
-                {
-                    "name": "Recherche",
-                    "value": f"`{keywords}`",
-                    "inline": True
-                },
-                {
-                    "name": "Livraison",
-                    "value": shippingStatus,
-                    "inline": True
-                },
-                {
-                    "name": "Provenance",
-                    "value": siteName,
-                    "inline": True
-                }
-            ],
+            "fields": fields,
             "footer": {
-                "text": "LBCBot - Surveillance de prix"
+                "text": "LBCBot - Surveillance de prix & IA"
             }
         }
         

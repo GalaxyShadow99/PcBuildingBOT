@@ -20,6 +20,7 @@ from logger import logger
 from notifier import deleteDiscordMessage, sendDiscordNotification
 from pydantic import BaseModel
 from scrapers import LeBonCoinScraper, VintedScraper
+from services.ai_analyzer import analyzeDealWithOllama
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from dotenv import load_dotenv
 
@@ -400,8 +401,23 @@ async def runScan(force: bool = False):
                 if cursor.fetchone():
                     continue
                     
-                # 3. Formatage et envoi de l'embed riche sur Discord
-                embedPayload = ad.toDiscordEmbed(maxPrice, keywords)
+                # 3. Analyse IA ciblée par Ollama (avec filtrage automatique si note < 12/20)
+                logger.info("🤖 [Analyse IA] Interrogation d'Ollama pour '%s' (%s€)...", ad.title, ad.price)
+                aiAnalysis, aiScore = await analyzeDealWithOllama(
+                    title=ad.title,
+                    price=ad.price,
+                    maxPrice=maxPrice,
+                    keywords=keywords,
+                    description=ad.description
+                )
+                
+                # Si l'IA a analysé l'annonce et attribué une note sous 12/20, on zappe la notification Discord !
+                if aiScore is not None and aiScore < 12.0:
+                    logger.warning("⛔ [Filtre IA] Annonce ignorée car notée %s/20 par l'IA : '%s'", aiScore, ad.title)
+                    continue
+                
+                # 4. Formatage et envoi de l'embed riche sur Discord
+                embedPayload = ad.toDiscordEmbed(maxPrice, keywords, aiAnalysis=aiAnalysis)
                 msgId = sendDiscordNotification(DISCORD_WEBHOOK_URL, embedPayload)
                 
                 # 4. Enregistrement en base de données avec le message ID Discord
