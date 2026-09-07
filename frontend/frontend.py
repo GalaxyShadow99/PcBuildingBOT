@@ -36,7 +36,7 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-def apiCall(method: str, path: str, payload: dict = None):
+def apiCall(method: str, path: str, payload: dict = None, timeout: int = 5):
     """Effectue un appel API HTTP vers le backend en transmettant la clé X-API-Key dans les Headers."""
     url = f"{BACKEND_API_URL}{path}"
     
@@ -53,7 +53,7 @@ def apiCall(method: str, path: str, payload: dict = None):
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     
     try:
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
             body = response.read().decode("utf-8")
             try:
                 return response.status, json.loads(body)
@@ -261,6 +261,27 @@ def triggerScan():
         flash(f"Erreur lors du lancement : {error_msg}", "danger")
         
     return redirect(url_for("index"))
+
+@app.route("/product/delete/<int:productId>", methods=["POST"])
+@login_required
+def deleteProductFrontend(productId):
+    status, res = apiCall("DELETE", f"/products/{productId}")
+    if status == 200 and isinstance(res, dict) and res.get("success"):
+        return jsonify({"success": True, "message": "Annonce supprimée"})
+    else:
+        error_msg = res.get("error", "Échec de la suppression") if isinstance(res, dict) else str(res)
+        return jsonify({"success": False, "error": error_msg}), 400
+
+@app.route("/product/reanalyze/<int:productId>", methods=["POST"])
+@login_required
+def reanalyzeProductFrontend(productId):
+    status, res = apiCall("POST", f"/products/{productId}/reanalyze", timeout=60)
+    if status == 200 and isinstance(res, dict) and res.get("success"):
+        data = res.get("data", {})
+        return jsonify({"success": True, "data": data})
+    else:
+        error_msg = res.get("error", "Échec de l'analyse") if isinstance(res, dict) else str(res)
+        return jsonify({"success": False, "error": error_msg}), 400
 
 @app.route("/purgeDB", methods=["POST"])
 @login_required

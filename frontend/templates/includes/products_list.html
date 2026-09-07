@@ -42,6 +42,11 @@
                                                 {{ product.query }}
                                             </span>
                                         </div>
+                                        <div class="d-flex gap-1 mb-1">
+                                            <a href="{{ product.url }}" target="_blank" class="btn btn-xs btn-outline-primary py-0 px-2" style="font-size: 0.65rem;">Voir</a>
+                                            <button type="button" class="btn btn-xs btn-outline-info py-0 px-2" style="font-size: 0.65rem;" onclick="reanalyzeProduct({{ product.id }}, this)" id="reanalyze-btn-{{ product.id }}">Tester IA</button>
+                                            <button type="button" class="btn btn-xs btn-outline-danger py-0 px-2" style="font-size: 0.65rem;" onclick="deleteProductCard({{ product.id }}, this)">Suppr</button>
+                                        </div>
                                         <h6 class="card-title mb-1 text-truncate" style="font-size: 0.85rem;" title="{{ product.title }}">
                                             <a href="{{ product.url }}" target="_blank" class="text-decoration-none fw-bold text-dark">
                                                 {{ product.title }}
@@ -49,6 +54,7 @@
                                         </h6>
                                         <p class="card-text mb-0 fw-bold text-primary" style="font-size: 0.9rem;">{{ product.price }} €</p>
                                         <p class="card-text mb-0"><small class="text-muted" style="font-size: 0.7rem;">{{ product.notifiedAt.split('T')[0] }} à {{ product.notifiedAt.split('T')[1][:5] }}</small></p>
+                                        <div class="mt-1 d-none alert p-1 mb-0" style="font-size: 0.65rem;" id="ai-res-{{ product.id }}"></div>
                                     </div>
                                 </div>
                             </div>
@@ -68,6 +74,7 @@
 <script>
 let activeSiteFilter = 'all';
 let activeQueryFilter = 'all';
+
 
 // Générer dynamiquement les boutons de filtres de recherches à partir des cartes présentes
 document.addEventListener("DOMContentLoaded", () => {
@@ -114,6 +121,58 @@ function filterProductsByQuery(query, btn) {
     
     activeQueryFilter = query;
     applyCombinedFilters();
+}
+
+function deleteProductCard(productId, btn) {
+    if (!confirm("Voulez-vous vraiment supprimer cette annonce ?")) return;
+    
+    btn.disabled = true;
+    fetch(`/product/delete/${productId}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            const card = btn.closest('.product-card');
+            if (card) card.remove();
+        } else {
+            alert("Échec de la suppression : " + (data.error || "Erreur inconnue"));
+            btn.disabled = false;
+        }
+    })
+    .catch(err => {
+        alert("Erreur de connexion : " + err);
+        btn.disabled = false;
+    });
+}
+
+function reanalyzeProduct(productId, btn) {
+    btn.disabled = true;
+    btn.textContent = "Analyse...";
+    const resDiv = document.getElementById(`ai-res-${productId}`);
+    if (resDiv) {
+        resDiv.classList.add('d-none');
+    }
+
+    fetch(`/product/reanalyze/${productId}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(res => {
+        btn.disabled = false;
+        btn.textContent = "Tester IA";
+        if (res.success && res.data) {
+            if (resDiv) {
+                const isGood = res.data.is_good_deal;
+                resDiv.className = `mt-1 alert p-1 mb-0 ${isGood ? 'alert-success' : 'alert-danger'}`;
+                resDiv.innerHTML = res.data.analysis ? res.data.analysis.replace(/\n/g, '<br>') : "Aucune analyse disponible.";
+                resDiv.classList.remove('d-none');
+            }
+        } else {
+            alert("Erreur d'analyse : " + (res.error || "Impossible d'interroger Ollama"));
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.textContent = "Tester IA";
+        alert("Erreur réseau : " + err);
+    });
 }
 
 function applyCombinedFilters() {

@@ -401,9 +401,9 @@ async def runScan(force: bool = False):
                 if cursor.fetchone():
                     continue
                     
-                # 3. Analyse IA ciblée par Ollama (avec filtrage automatique si note < 12/20)
-                logger.info("🤖 [Analyse IA] Interrogation d'Ollama pour '%s' (%s€)...", ad.title, ad.price)
-                aiAnalysis, aiScore = await analyzeDealWithOllama(
+                # 3. Analyse IA ciblée par Ollama (avec filtrage binaire is_good_deal)
+                logger.info("[Analyse IA] Interrogation d'Ollama pour '%s' (%s€)...", ad.title, ad.price)
+                aiAnalysis, aiIsGoodDeal = await analyzeDealWithOllama(
                     title=ad.title,
                     price=ad.price,
                     maxPrice=maxPrice,
@@ -411,21 +411,21 @@ async def runScan(force: bool = False):
                     description=ad.description
                 )
                 
-                # Si l'IA a analysé l'annonce et attribué une note sous 12/20, on zappe la notification Discord !
-                if aiScore is not None and aiScore < 12.0:
-                    logger.warning("⛔ [Filtre IA] Annonce ignorée car notée %s/20 par l'IA : '%s'", aiScore, ad.title)
+                # Si l'IA a analysé l'annonce et a répondu is_good_deal = False, on bloque le ping Discord !
+                if aiIsGoodDeal is False:
+                    logger.warning("[Filtre IA] Annonce rejetée par l'IA (is_good_deal=False) : '%s %s'", ad.title, ad.description)
                     continue
                 
                 # 4. Formatage et envoi de l'embed riche sur Discord
                 embedPayload = ad.toDiscordEmbed(maxPrice, keywords, aiAnalysis=aiAnalysis)
                 msgId = sendDiscordNotification(DISCORD_WEBHOOK_URL, embedPayload)
                 
-                # 4. Enregistrement en base de données avec le message ID Discord
+                # 5. Enregistrement en base de données avec le message ID Discord et la description complète
                 notifiedAtStr = datetime.utcnow().isoformat()
                 cursor.execute("""
                     INSERT INTO products 
-                    (watchlistId, site, externalId, title, price, url, imageUrl, publishedAt, notifiedAt, discordMessageId)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (watchlistId, site, externalId, title, price, url, imageUrl, description, publishedAt, notifiedAt, discordMessageId)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     itemId,
                     ad.site,
@@ -434,6 +434,7 @@ async def runScan(force: bool = False):
                     ad.price,
                     ad.url,
                     ad.imageUrl,
+                    ad.description,
                     ad.publishedAt,
                     notifiedAtStr,
                     msgId
@@ -679,6 +680,58 @@ def getProducts():
         for r in rows
     ]
     return apiResponse(True, data=products)
+
+@app.delete("/products/{productId}", dependencies=[Depends(verifyApiKey)])
+def deleteProduct(productId: int):
+    conn = getDbConnection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT discordMessageId FROM products WHERE id = ?", (productId,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Product not found")
+        
+    msg_id = row[0]
+    if msg_id and DISCORD_WEBHOOK_URL:
+        deleteDiscordMessage(DISCORD_WEBHOOK_URL, msg_id)
+        
+    cursor.execute("DELETE FROM products WHERE id = ?", (productId,))
+    conn.commit()
+    conn.close()
+    return apiResponse(True, data={"productId": productId})
+
+@app.post("/products/{productId}/reanalyze", dependencies=[Depends(verifyApiKey)])
+def reanalyzeProductWithAI(productId: int):
+    conn = getDbConnection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT p.id, p.title, p.price, p.url, p.site, p.description, w.keywords, w.maxPrice 
+        FROM products p 
+        LEFT JOIN watchlist w ON p.watchlistId = w.id 
+        WHERE p.id = ?
+    """, (productId,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Product not found")
+        
+    p_id, title, price, url, site, description, keywords, maxPrice = row
+    conn.close()
+    
+    # Appel synchrone/async à Ollama pour réévaluer l'annonce avec sa description sauvegardée
+    import asyncio
+    analysis, is_good_deal = asyncio.run(analyzeDealWithOllama(
+        title=title,
+        price=price,
+        maxPrice=maxPrice or 0.0,
+        keywords=keywords or title,
+        description=description
+    ))
+    return apiResponse(True, data={
+        "productId": productId,
+        "is_good_deal": is_good_deal,
+        "analysis": analysis
+    })
 
 @app.post("/purgeDB", dependencies=[Depends(verifyApiKey)])
 def purgeDatabase():

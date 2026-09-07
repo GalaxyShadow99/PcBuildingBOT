@@ -82,33 +82,31 @@ def initDb():
             price REAL NOT NULL,
             url TEXT NOT NULL,
             imageUrl TEXT,
+            description TEXT,
             publishedAt TEXT,
             notifiedAt TEXT NOT NULL,
             discordMessageId TEXT,
             FOREIGN KEY (watchlistId) REFERENCES watchlist(id) ON DELETE CASCADE
         )
     """)
+    # Auto-migration propre pour s'assurer que toutes les colonnes requises existent sans empiler de try/except dispersés
+    existing_columns = {
+        "products": [row[1] for row in cursor.execute("PRAGMA table_info(products)").fetchall()],
+        "watchlist": [row[1] for row in cursor.execute("PRAGMA table_info(watchlist)").fetchall()],
+        "default_banned_words": [row[1] for row in cursor.execute("PRAGMA table_info(default_banned_words)").fetchall()]
+    }
     
-    # Migration : Ajout de la colonne discordMessageId si absente
-    try:
-        cursor.execute("ALTER TABLE products ADD COLUMN discordMessageId TEXT")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
+    migrations = [
+        ("products", "description", "ALTER TABLE products ADD COLUMN description TEXT"),
+        ("products", "discordMessageId", "ALTER TABLE products ADD COLUMN discordMessageId TEXT"),
+        ("watchlist", "useDefaultBannedWords", "ALTER TABLE watchlist ADD COLUMN useDefaultBannedWords INTEGER DEFAULT 1"),
+        ("default_banned_words", "category", "ALTER TABLE default_banned_words ADD COLUMN category TEXT DEFAULT 'Build-Complet'")
+    ]
 
-    # Migration : Ajout de la colonne useDefaultBannedWords si absente
-    try:
-        cursor.execute("ALTER TABLE watchlist ADD COLUMN useDefaultBannedWords INTEGER DEFAULT 1")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
-
-    # Migration : Ajout de la colonne category dans default_banned_words si absente
-    try:
-        cursor.execute("ALTER TABLE default_banned_words ADD COLUMN category TEXT DEFAULT 'Build-Complet'")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
+    for table, column, alter_sql in migrations:
+        if column not in existing_columns.get(table, []):
+            cursor.execute(alter_sql)
+    conn.commit()
 
     # Purge des mots génériques trop stricts qui faisaient rater de bonnes annonces
     cursor.execute("DELETE FROM default_banned_words WHERE word IN ('pc', 'i3', 'i5', 'i7', 'i9', 'ryzen 3', 'ryzen 5', 'ryzen 7', 'ryzen 9', 'ordinateur', 'setup', 'config', 'tour', 'laptop', 'portable', 'bureautique', 'computer', 'desktop', 'ordenador', 'portatil', 'portatile', 'sodimm', 'so-dimm', 'sodim', 'laptop ram', 'notebook ram', 'ram portable', 'notebook', 'portátil', 'ecc', 'registered', 'rdimm', 'server')")

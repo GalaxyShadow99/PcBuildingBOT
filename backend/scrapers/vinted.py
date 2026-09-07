@@ -97,11 +97,10 @@ class VintedScraper:
                         is_suspicious_price = maxPrice is not None and price < (0.4 * maxPrice)
                         
                         if title_has_all or checkTitleRelevance(title.lower(), query.lower()):
-                            # Si le prix est suspect (< 40%), on tente d'extraire la description pour enrichir l'IA
-                            if is_suspicious_price:
-                                logger.info("   - Récupération de la description complète pour : '%s' (prix suspect: %s€)", title, price)
-                                await scraped_item.fetchDescription(client)
-                                await asyncio.sleep(randint(100, 400) / 1000.0)
+                            # Extraction systématique de la description pour donner 100% du contexte texte au LLM
+                            logger.info("   - Chargement de la description pour enrichir l'IA : '%s'", title)
+                            await scraped_item.fetchDescription(client)
+                            await asyncio.sleep(randint(100, 300) / 1000.0)
                             
                             formattedItems.append(scraped_item)
                         
