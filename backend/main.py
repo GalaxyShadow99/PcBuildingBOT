@@ -132,8 +132,22 @@ async def updateHealthAuto():
         logger.info("[Ping Test] Test de connexion réseau en cours sur LeBonCoin via Camoufox...")
         try:
             from camoufox.async_api import AsyncCamoufox
+            from scrapers.lbc import LBC_DATADOME_COOKIE
             async with AsyncCamoufox(headless=True) as browser:
-                page = await browser.new_page()
+                contexts = browser.contexts
+                context = contexts[0] if contexts else await browser.new_context()
+                if LBC_DATADOME_COOKIE:
+                    await context.add_cookies([{
+                        "name": "datadome",
+                        "value": LBC_DATADOME_COOKIE,
+                        "domain": ".leboncoin.fr",
+                        "path": "/",
+                        "httpOnly": True,
+                        "secure": True,
+                        "sameSite": "Lax"
+                    }])
+                    logger.info("[Ping Test LBC] Cookie Datadome injecté pour le ping test.")
+                page = await context.new_page()
                 res = await page.goto("https://www.leboncoin.fr/recherche?category=15&text=rtx", wait_until="domcontentloaded", timeout=15000)
                 if res and res.status == 200:
                     updateHealth("leboncoin", "OK")

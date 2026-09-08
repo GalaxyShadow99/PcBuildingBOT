@@ -38,6 +38,7 @@ class LeBonCoinScraper:
         context = contexts[0] if contexts else await browser.new_context()
 
         if LBC_DATADOME_COOKIE:
+            logger.info("[LBC-Scraper] Cookie Datadome trouvé (taille: %s chars). Injection dans le navigateur...", len(LBC_DATADOME_COOKIE))
             try:
                 await context.add_cookies([{
                     "name": "datadome",
@@ -48,8 +49,11 @@ class LeBonCoinScraper:
                     "secure": True,
                     "sameSite": "Lax"
                 }])
+                logger.info("[LBC-Scraper] Cookie Datadome injecté avec succès dans le contexte.")
             except Exception as e:
                 logger.warning("[LBC-Scraper] Impossible d'injecter le cookie datadome : %s", e)
+        else:
+            logger.warning("[LBC-Scraper] Aucun cookie LBC_DATADOME_COOKIE défini dans le .env.")
 
         # Ouvre un nouvel onglet temporaire dans ce contexte
         page = await context.new_page()
