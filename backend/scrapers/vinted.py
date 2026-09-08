@@ -111,5 +111,5 @@ class VintedScraper:
                 return formattedItems
                 
         except Exception as e:
-            logger.error("[Vinted-Scraper] Erreur de scraping : %s", e)
+            logger.error("[Vinted-Scraper] Erreur de scraping : [%s] %s", type(e).__name__, e or repr(e))
             raise

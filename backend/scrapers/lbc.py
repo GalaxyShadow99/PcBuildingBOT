@@ -7,6 +7,7 @@ from camoufox.async_api import AsyncCamoufox
 from logger import logger
 
 from dotenv import load_dotenv
+from scrapers.item import ScrapedItem
 
 load_dotenv()
 
