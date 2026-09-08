@@ -92,8 +92,8 @@ Indique la raison exacte dans `reason` et un conseil concis dans `short_advice`.
             format=OllamaReponse.model_json_schema(),
             options={
                 "temperature": 0.3,
-                "num_ctx": 4096,
-                "num_gpu": 99
+                "num_gpu": 99,
+                "num_ctx": 512
             }
         )
         

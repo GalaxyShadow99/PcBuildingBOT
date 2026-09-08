@@ -79,12 +79,12 @@ class ScrapedItem:
         siteName = self.site.capitalize()
         discount = self.getDealPercentage(maxPrice)
         
-        title = f"🚨 Nouvelle alerte : {self.title}"
+        title = f"{self.title} | {self.price} €"
         if discount >= 15:
             title = f"🔥 [{discount}% Off] {self.title}"
             
         color = 16737792 if discount >= 15 else 3447003
-        shippingStatus = "⚠️ Main propre uniquement (Pas d'envoi)" if self.requiresPickup() else "Envoi possible"
+        shippingStatus = "Main propre uniquement (Pas d'envoi)" if self.requiresPickup() else "Envoi possible"
         
         fields = [
             {
@@ -111,7 +111,7 @@ class ScrapedItem:
 
         if aiAnalysis:
             fields.append({
-                "name": "🤖 Analyse IA (Qwen 2.5)",
+                "name": "Analyse Qwen",
                 "value": aiAnalysis,
                 "inline": False
             })
@@ -122,7 +122,7 @@ class ScrapedItem:
             "color": color,
             "fields": fields,
             "footer": {
-                "text": "LBCBot - Surveillance de prix & IA"
+                "text": "LBCBot"
             }
         }
         
