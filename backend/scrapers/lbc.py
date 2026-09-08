@@ -1,4 +1,5 @@
 import json
+import os
 import urllib.parse
 from random import randint
 
@@ -6,6 +7,8 @@ from camoufox.async_api import AsyncCamoufox
 from logger import logger
 
 from scrapers.item import ScrapedItem
+
+LBC_DATADOME_COOKIE = os.environ.get("LBC_DATADOME_COOKIE", "").strip()
 
 
 class LeBonCoinScraper:
@@ -30,8 +33,26 @@ class LeBonCoinScraper:
         formattedAds = []
         encodedQuery = urllib.parse.quote_plus(query)
         
-        # Ouvre un nouvel onglet temporaire pour cette recherche
-        page = await browser.new_page()
+        # Obtenir ou créer un contexte avec cookie si configuré
+        contexts = browser.contexts
+        context = contexts[0] if contexts else await browser.new_context()
+
+        if LBC_DATADOME_COOKIE:
+            try:
+                await context.add_cookies([{
+                    "name": "datadome",
+                    "value": LBC_DATADOME_COOKIE,
+                    "domain": ".leboncoin.fr",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "Lax"
+                }])
+            except Exception as e:
+                logger.warning("[LBC-Scraper] Impossible d'injecter le cookie datadome : %s", e)
+
+        # Ouvre un nouvel onglet temporaire dans ce contexte
+        page = await context.new_page()
         
         try:
             for i in range(maxPages):
