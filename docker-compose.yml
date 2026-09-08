@@ -10,6 +10,9 @@ services:
     environment:
       - DATABASE_PATH=/app/data/database.db
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data  # Stockage persistant de la base de données
     ports:
