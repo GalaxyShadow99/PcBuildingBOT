@@ -8,7 +8,8 @@ from logger import logger
 
 from scrapers.item import ScrapedItem
 
-LBC_DATADOME_COOKIE = os.environ.get("LBC_DATADOME_COOKIE", "").strip()
+def get_datadome_cookie() -> str:
+    return os.environ.get("LBC_DATADOME_COOKIE", "").strip()
 
 
 class LeBonCoinScraper:
@@ -37,12 +38,13 @@ class LeBonCoinScraper:
         contexts = browser.contexts
         context = contexts[0] if contexts else await browser.new_context()
 
-        if LBC_DATADOME_COOKIE:
-            logger.info("[LBC-Scraper] Cookie Datadome trouvé (taille: %s chars). Injection dans le navigateur...", len(LBC_DATADOME_COOKIE))
+        cookie_val = get_datadome_cookie()
+        if cookie_val:
+            logger.info("[LBC-Scraper] Cookie Datadome trouvé (taille: %s chars). Injection dans le navigateur...", len(cookie_val))
             try:
                 await context.add_cookies([{
                     "name": "datadome",
-                    "value": LBC_DATADOME_COOKIE,
+                    "value": cookie_val,
                     "domain": ".leboncoin.fr",
                     "path": "/",
                     "httpOnly": True,
@@ -53,7 +55,7 @@ class LeBonCoinScraper:
             except Exception as e:
                 logger.warning("[LBC-Scraper] Impossible d'injecter le cookie datadome : %s", e)
         else:
-            logger.warning("[LBC-Scraper] Aucun cookie LBC_DATADOME_COOKIE défini dans le .env.")
+            logger.warning("[LBC-Scraper] Aucun cookie LBC_DATADOME_COOKIE défini dans l'environnement.")
 
         # Ouvre un nouvel onglet temporaire dans ce contexte
         page = await context.new_page()
