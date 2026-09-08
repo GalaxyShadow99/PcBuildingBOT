@@ -26,7 +26,7 @@ class VintedScraper:
         formattedItems = []
         
         try:
-            async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+            async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=15.0) as client:
                 # Étape 1 : Obtenir les cookies de session
                 await client.get("https://www.vinted.fr")
                 
