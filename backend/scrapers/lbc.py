@@ -6,9 +6,13 @@ from random import randint
 from camoufox.async_api import AsyncCamoufox
 from logger import logger
 
-from scrapers.item import ScrapedItem
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def get_datadome_cookie() -> str:
+    load_dotenv()
     return os.environ.get("LBC_DATADOME_COOKIE", "").strip()
 
 

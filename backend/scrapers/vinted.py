@@ -41,8 +41,8 @@ class VintedScraper:
                     "catalog_ids": 3564
                 }
                 
-                if maxPrice != 0.0:
-                    params["price_to"] = maxPrice
+                if maxPrice and float(maxPrice) > 0:
+                    params["price_to"] = float(maxPrice)
                     
                 for page_num in range(1, maxPages + 1):
                     logger.info("   - Chargement de la page Vinted %s...", page_num)
