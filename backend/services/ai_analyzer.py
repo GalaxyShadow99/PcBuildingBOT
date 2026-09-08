@@ -61,27 +61,47 @@ EXIGENCES GÉNÉRALES COMPOSANTS PC :
 """
 
     prompt = f"""Tu es un assistant de filtrage hardware d'occasion.
-Ton UNIQUE rôle est de vérifier si l'annonce correspond au composant PC recherché et qu'il ne s'agit pas d'une arnaque/piège.
-Remarque : Le prix ({price} €) est DÉJÀ validé par le système. Ne compare PAS le prix.
+Ton UNIQUE rôle est de vérifier si l'annonce correspond exactement au composant PC recherché.
 
-DONNÉES ANNONCE :
+DONNÉES ANNONCE À ANALYSER :
 - Composant recherché : {keywords}
 - Titre annonce : {title}
 - Description : {description if description else "Aucune"}
 
 =====================================================
-RÈGLES STRICTES À APPLIQUER :
+EXEMPLES DE DÉCISIONS À SUIVRE (FEW-SHOT) :
 =====================================================
-1. Le produit doit être un composant informatique PC fonctionnel. Si le matériel est cassé / HS / pour pièces / non testé -> REJET (`is_good_deal = false`).
+
+--- EXEMPLE 1 (VALIDE - Boîte non originale) ---
+Recherche : "Ryzen 5 3600"
+Titre : "Processeur AMD Ryzen 5 3600"
+Description : "Processeur en très bon état. La boîte n'est pas celle d'origine. Le processeur fonctionne très bien."
+-> Décision : `is_good_deal = true` (Raison: Le processeur Ryzen 5 3600 est vendu fonctionnel, peu importe le carton d'emballage)
+
+--- EXEMPLE 2 (VALIDE - Annonce en italien/espagnol) ---
+Recherche : "Ryzen 5 3600"
+Titre : "Cpu Amd ryzen 5 3600"
+Description : "Cpu perfettamente funzionante, perfette condizioni e pronta all'uso!"
+-> Décision : `is_good_deal = true` (Raison: C'est le processeur Ryzen 5 3600 exact en parfait état)
+
+--- EXEMPLE 3 (REJETÉ - Boîte vide) ---
+Recherche : "RTX 2060"
+Titre : "Boite vide RTX 2060"
+Description : "Seulement la boîte en carton sans la carte graphique."
+-> Décision : `is_good_deal = false` (Raison: Boîte vide sans composant)
+
+--- EXEMPLE 4 (REJETÉ - Modèle différent) ---
+Recherche : "GTX 1660"
+Titre : "Carte graphique GTX 1660 Super"
+Description : "Vend carte graphique 1660 Super 6Go"
+-> Décision : `is_good_deal = false` (Raison: GTX 1660 Super n'est pas la GTX 1660 exacte)
+
+=====================================================
+RÈGLES STRICTES :
+=====================================================
+1. Si le composant exact est présent et fonctionnel -> `is_good_deal = true` (MÊME si la boîte n'est pas originale ou si la description est en italien/espagnol).
+2. Si le modèle varie (ex: Super, Ti au lieu de la recherche de base), si c'est une boîte vide ou du matériel HS -> `is_good_deal = false`.
 {specific_rules}
-
-=====================================================
-DÉCISION FINALE :
-=====================================================
-Si l'annonce est valide et correspond au composant recherché -> `is_good_deal = true`.
-Si l'annonce est un piège (boîte seule, RAM 4Go au lieu de 16Go, SODIMM, matériel HS, produit hors-sujet) -> `is_good_deal = false`.
-
-Indique la raison exacte dans `reason` et un conseil concis dans `short_advice`. Ne parle jamais d'images ou de photos.
 """
 
     try:
@@ -93,7 +113,7 @@ Indique la raison exacte dans `reason` et un conseil concis dans `short_advice`.
             options={
                 "temperature": 0.3,
                 "num_gpu": 99,
-                "num_ctx": 512
+                "num_ctx": 4096
             }
         )
         

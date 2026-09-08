@@ -429,9 +429,9 @@ async def runScan(force: bool = False):
                     description=ad.description
                 )
                 
-                # Si l'IA a analysé l'annonce et a répondu is_good_deal = False, on bloque le ping Discord !
-                if aiIsGoodDeal is False:
-                    logger.warning("[Filtre IA] Annonce rejetée par l'IA (is_good_deal=False) : '%s %s'", ad.title, ad.description)
+                # Si l'IA refuse (is_good_deal = False) OU si Ollama est en erreur (aiIsGoodDeal is None), on bloque la notification Discord !
+                if aiIsGoodDeal is not True:
+                    logger.warning("[Filtre IA/Erreur] Annonce non retenue (is_good_deal=%s) : '%s %s'", aiIsGoodDeal, ad.title, ad.description or "")
                     continue
                 
                 # 4. Formatage et envoi de l'embed riche sur Discord
