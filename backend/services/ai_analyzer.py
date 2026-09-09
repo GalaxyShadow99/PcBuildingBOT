@@ -3,44 +3,39 @@ import sys
 
 from dotenv import load_dotenv
 from logger import logger
-from ollama import AsyncClient
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 load_dotenv()
 
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "")
+# Par défaut sur llama-server, le port est 8080 (ou configuré via --port)
+LLAMA_HOST = os.environ.get("LLAMA_HOST", "http://localhost:8080")
 
-if not OLLAMA_HOST:
-    logger.fatal("OLLAMA_HOST doit être défini. Valeur actuelle : %s", OLLAMA_HOST)
-    sys.exit(1)
+if not LLAMA_HOST.startswith("http://") and not LLAMA_HOST.startswith("https://"):
+    LLAMA_HOST = f"http://{LLAMA_HOST}"
 
-# Assure le préfixe http:// ou https:// et le port 11434
-if not OLLAMA_HOST.startswith("http://") and not OLLAMA_HOST.startswith("https://"):
-    OLLAMA_HOST = f"http://{OLLAMA_HOST}"
-
-if ":11434" not in OLLAMA_HOST and OLLAMA_HOST.count(":") < 2:
-    OLLAMA_HOST = f"{OLLAMA_HOST}:11434"
-
-if not OLLAMA_MODEL:
-    logger.fatal("OLLAMA_MODEL doit être défini. Valeur actuelle : %s", OLLAMA_MODEL)
-    sys.exit(1)
+# Client compatible OpenAI ciblant llama-server
+# api_key est requise par le SDK OpenAI mais llama-server n'en a pas besoin par défaut
+client = AsyncOpenAI(
+    base_url=f"{LLAMA_HOST}/v1",
+    api_key="no-key-required",
+    timeout=120.0
+)
 
 
-class OllamaReponse(BaseModel):
+class DealResponse(BaseModel):
     is_good_deal: bool
     reason: str
     short_advice: str
 
 
-async def analyzeDealWithOllama(title: str, price: float, maxPrice: float, keywords: str, description: str = None) -> tuple[str, bool]:
+async def analyzeDealWithLlama(title: str, price: float, maxPrice: float, keywords: str, description: str = None) -> tuple[str, bool]:
     """
-    Envoie les détails de l'annonce à Ollama via le SDK officiel (AsyncClient) avec réponse
-    structurée Pydantic binaire (is_good_deal: bool) adaptée aux modèles 3B.
+    Envoie les détails de l'annonce à llama-server via l'API OpenAI avec 
+    contrainte de grammaire JSON via Pydantic.
     """
     kw_lower = keywords.lower()
     
-    # Construction dynamique des instructions spécifiques pour éviter d'embrouiller le modèle 3B
     if any(gpu_term in kw_lower for gpu_term in ["rtx", "gtx", "rx", "gpu", "carte graphique", "graphics card"]):
         specific_rules = """
 EXIGENCES CARTE GRAPHIQUE (GPU) :
@@ -105,21 +100,22 @@ RÈGLES STRICTES :
 """
 
     try:
-        client = AsyncClient(host=OLLAMA_HOST, timeout=120.0)
-        response = await client.chat(
-            model=OLLAMA_MODEL,
+        response = await client.chat.completions.create(
+            # llama-server charge déjà le modèle en mémoire, ce champ est indicatif
+            model="local-model",
             messages=[{'role': 'user', 'content': prompt}],
-            format=OllamaReponse.model_json_schema(),
-            options={
-                "temperature": 0.3,
-                "num_gpu": 99,
-                "num_ctx": 4096
-            }
+            temperature=0.2,
+            # Force la sortie JSON stricte respectant le schéma Pydantic via la grammaire de llama.cpp
+            response_format={
+                "type": "json_object",
+                "schema": DealResponse.model_json_schema()
+            },
+            max_tokens=256
         )
         
-        raw_content = response.message.content
-        parsed = OllamaReponse.model_validate_json(raw_content)
-        logger.info("[Ollama Analysis OK] Valide: %s | Raison: %s", parsed.is_good_deal, parsed.reason)
+        raw_content = response.choices[0].message.content
+        parsed = DealResponse.model_validate_json(raw_content)
+        logger.info("[Llama Analysis OK] Valide: %s | Raison: %s", parsed.is_good_deal, parsed.reason)
         
         status_icon = "Bonne affaire" if parsed.is_good_deal else "À éviter"
         formatted_analysis = (
@@ -130,5 +126,5 @@ RÈGLES STRICTES :
         return formatted_analysis, parsed.is_good_deal
 
     except Exception as e:
-        logger.warning("⚠️ Impossible d'analyser l'annonce avec Ollama sur %s : [%s] %s", OLLAMA_HOST, type(e).__name__, e or repr(e))
+        logger.warning("⚠️ Impossible d'analyser l'annonce avec llama-server sur %s : [%s] %s", LLAMA_HOST, type(e).__name__, e or repr(e))
         return None, None
