@@ -108,65 +108,57 @@ def initDb():
             cursor.execute(alter_sql)
     conn.commit()
 
-    # Purge des mots génériques trop stricts qui faisaient rater de bonnes annonces
-    cursor.execute("DELETE FROM default_banned_words WHERE word IN ('pc', 'i3', 'i5', 'i7', 'i9', 'ryzen 3', 'ryzen 5', 'ryzen 7', 'ryzen 9', 'ordinateur', 'setup', 'config', 'tour', 'laptop', 'portable', 'bureautique', 'computer', 'desktop', 'ordenador', 'portatil', 'portatile', 'sodimm', 'so-dimm', 'sodim', 'laptop ram', 'notebook ram', 'ram portable', 'notebook', 'portátil', 'ecc', 'registered', 'rdimm', 'server')")
-    conn.commit()
-
-    # Peuplement initial de la table default_banned_words si vide (FR, EN, DE, ES, IT, NL, PT)
-    cursor.execute("SELECT COUNT(*) FROM default_banned_words")
-    if cursor.fetchone()[0] == 0:
-        categorized_words = [
-            # --- Build-Complet / Ordinateurs Entiers (Expressions Stricte Explicites uniquement) ---
-            ("unite centrale", "Build-Complet"), ("unité centrale", "Build-Complet"), ("pc complet", "Build-Complet"), 
-            ("komplett pc", "Build-Complet"), ("equipo completo", "Build-Complet"), ("pc completo", "Build-Complet"),
-            ('laptop', 'Build-Complet'),('notebook', 'Build-Complet'),('portátil', 'Build-Complet'),('portatile', 'Build-Complet'),
-            ("ordinateur portable", "Build-Complet"), ("ordenador portátil", "Build-Complet"), ("computer portatile", "Build-Complet"),
-            ("ordinateur de bureau", "Build-Complet"), ("ordenador de sobremesa", "Build-Complet"), ("computer desktop", "Build-Complet"),
-            ("pc de bureau", "Build-Complet"), ("pc de sobremesa", "Build-Complet"), ("pc da scrivania", "Build-Complet"),
-            ("tour pc", "Build-Complet"), ("torre pc", "Build-Complet"), ("pc tower", "Build-Complet"),
-            ("config complète", "Build-Complet"), ("config completa", "Build-Complet"), ("komplett konfiguration", "Build-Complet"),
-            
-            # --- Refroidissement / Ventirads / Watercooling / Accessoires ---
-            ("ventirad", "cooling"), ("cooler", "cooling"), ("ventilateur", "cooling"), ("ventilador", "cooling"), ("fan", "cooling"),
-            ("disipador", "cooling"), ("dissipatore", "cooling"), ("support", "cooling"), ("suporte", "cooling"), ("bracket", "cooling"),
-            ("holder", "cooling"), ("watercooling", "cooling"), ("heatsink", "cooling"), ("dissipateur", "cooling"), ("backplate", "cooling"),
-            ("ventola", "cooling"), ("kühler", "cooling"), ("kuhler", "cooling"), ("lüfter", "cooling"), ("lufter", "cooling"),
-            ("ventilatore", "cooling"), ("radiateur", "cooling"), ("radiador", "cooling"), ("waterblock", "cooling"), ("water block", "cooling"),
-            ("koeler", "cooling"), ("koelers", "cooling"), ("chiller", "cooling"), ("aio", "cooling"),
-            ("wasserkühlung", "cooling"), ("wasserkuehlung", "cooling"), ("refrigeracion", "cooling"), ("refrigeración", "cooling"),
-            ("raffreddamento", "cooling"), ("koeling", "cooling"), ("befestigung", "cooling"),
-            
-            # --- RAM Laptop / SODIMM ---
-            ("sodimm", "ram_laptop"), ("so-dimm", "ram_laptop"), ("sodim", "ram_laptop"), 
-            ("laptop ram", "ram_laptop"), ("notebook ram", "ram_laptop"), ("ram portable", "ram_laptop"),
-            
-            # --- Matériel Serveur / ECC ---
-            ("ecc", "server"), ("registered", "server"), ("rdimm", "server"), ("serveur", "server"), ("server", "server"),
-            ("serverram", "server"), ("ecc memory", "server"), ("servidor", "server"), ("serverheugenis", "server"),
-            
-            # --- Emballages / Boîtes Seules / Vides ---
-            ("boite", "packaging"), ("boîte", "packaging"), ("box", "packaging"), ("carton", "packaging"), ("caja", "packaging"),
-            ("box only", "packaging"), ("emballage", "packaging"), ("verpakking", "packaging"), ("verpackung", "packaging"),
-            ("scatola", "packaging"), ("scatolo", "packaging"), ("caixa", "packaging"), ("karton", "packaging"),
-            ("empty box", "packaging"), ("boite vide", "packaging"), ("boîte vide", "packaging"), ("caja vacia", "packaging"),
-            ("caja vacía", "packaging"), ("leere verpackung", "packaging"), ("leerkarton", "packaging"), ("ovp", "packaging"),
-            
-            # --- Matériel HS / Panne / Pièces ---
-            ("hs", "broken"), ("panne", "broken"), ("pour pieces", "broken"), ("pour pièces", "broken"),
-            ("arreglar", "broken"), ("reparar", "broken"), ("rot", "broken"), ("defekt", "broken"), ("defective", "broken"), ("broken", "broken"),
-            ("for parts", "broken"), ("spares", "broken"), ("para piezas", "broken"), ("para repuestos", "broken"),
-            ("per parti di ricambio", "broken"), ("defetto", "broken"), ("gusto", "broken"), ("defect", "broken"),
-            ("capaciteit defect", "broken"), ("avaria", "broken"), ("estragado", "broken"),
-            
-            # --- Logiciels / Pilotes / Manuel / Peripheriques hors-sujet ---
-            ("dvd", "software"), ("driver", "software"), ("drivers", "software"), ("manual", "software"), ("manuel", "software"),
-            ("cd-rom", "software"), ("cdrom", "software"), ("anleitung", "software"), ("handbuch", "software"), ("guia", "software"), ("guía", "software"),
-            ("huion", "software"), ("wacom", "software"), ("xp-pen", "software"), ("xppen", "software"), ("tavoletta", "software"), ("tablette", "software"),
-            ("drawing tablet", "software"), ("grafiktablett", "software"), ("tableta grafica", "software"), ("tableta gráfica", "software")
-        ]
-        cursor.executemany("INSERT OR IGNORE INTO default_banned_words (word, category) VALUES (?, ?)", categorized_words)
-        conn.commit()
+    # Peuplement initial / insertion des mots bannis par défaut catégorisés (FR, EN, DE, ES, IT, NL, PT)
+    categorized_words = [
+        # --- Build-Complet / Ordinateurs Entiers (Expressions Stricte Explicites uniquement) ---
+        ("unite centrale", "Build-Complet"), ("unité centrale", "Build-Complet"), ("pc complet", "Build-Complet"), 
+        ("komplett pc", "Build-Complet"), ("equipo completo", "Build-Complet"), ("pc completo", "Build-Complet"),
+        ('laptop', 'Build-Complet'),('notebook', 'Build-Complet'),('portátil', 'Build-Complet'),('portatile', 'Build-Complet'),
+        ("ordinateur portable", "Build-Complet"), ("ordenador portátil", "Build-Complet"), ("computer portatile", "Build-Complet"),
+        ("ordinateur de bureau", "Build-Complet"), ("ordenador de sobremesa", "Build-Complet"), ("computer desktop", "Build-Complet"),
+        ("pc de bureau", "Build-Complet"), ("pc de sobremesa", "Build-Complet"), ("pc da scrivania", "Build-Complet"),
+        ("tour pc", "Build-Complet"), ("torre pc", "Build-Complet"), ("pc tower", "Build-Complet"),
+        ("config complète", "Build-Complet"), ("config completa", "Build-Complet"), ("komplett konfiguration", "Build-Complet"),
         
+        # --- Refroidissement / Ventirads / Watercooling / Accessoires ---
+        ("ventirad", "cooling"), ("cooler", "cooling"), ("ventilateur", "cooling"), ("ventilador", "cooling"), ("fan", "cooling"),
+        ("disipador", "cooling"), ("dissipatore", "cooling"), ("support", "cooling"), ("suporte", "cooling"), ("bracket", "cooling"),
+        ("holder", "cooling"), ("watercooling", "cooling"), ("heatsink", "cooling"), ("dissipateur", "cooling"), ("backplate", "cooling"),
+        ("ventola", "cooling"), ("kühler", "cooling"), ("kuhler", "cooling"), ("lüfter", "cooling"), ("lufter", "cooling"),
+        ("ventilatore", "cooling"), ("radiateur", "cooling"), ("radiador", "cooling"), ("waterblock", "cooling"), ("water block", "cooling"),
+        ("koeler", "cooling"), ("koelers", "cooling"), ("chiller", "cooling"), ("aio", "cooling"),
+        ("wasserkühlung", "cooling"), ("wasserkuehlung", "cooling"), ("refrigeracion", "cooling"), ("refrigeración", "cooling"),
+        ("raffreddamento", "cooling"), ("koeling", "cooling"), ("befestigung", "cooling"),
+        
+        # --- RAM Laptop / SODIMM ---
+        ("sodimm", "ram_laptop"), ("so-dimm", "ram_laptop"), ("sodim", "ram_laptop"), 
+        ("laptop ram", "ram_laptop"), ("notebook ram", "ram_laptop"), ("ram portable", "ram_laptop"),
+        
+        # --- Matériel Serveur / ECC ---
+        ("ecc", "server"), ("registered", "server"), ("rdimm", "server"), ("serveur", "server"), ("server", "server"),
+        ("serverram", "server"), ("ecc memory", "server"), ("servidor", "server"), ("serverheugenis", "server"),
+        
+        # --- Emballages / Boîtes Seules / Vides ---
+        ("boite", "packaging"), ("boîte", "packaging"), ("box", "packaging"), ("carton", "packaging"), ("caja", "packaging"),
+        ("box only", "packaging"), ("emballage", "packaging"), ("verpakking", "packaging"), ("verpackung", "packaging"),
+        ("scatola", "packaging"), ("scatolo", "packaging"), ("caixa", "packaging"), ("karton", "packaging"),
+        ("empty box", "packaging"), ("boite vide", "packaging"), ("boîte vide", "packaging"), ("caja vacia", "packaging"),
+        ("caja vacía", "packaging"), ("leere verpackung", "packaging"), ("leerkarton", "packaging"), ("ovp", "packaging"),
+        
+        # --- Matériel HS / Panne / Pièces ---
+        ("hs", "broken"), ("panne", "broken"), ("pour pieces", "broken"), ("pour pièces", "broken"),
+        ("arreglar", "broken"), ("reparar", "broken"), ("rot", "broken"), ("defekt", "broken"), ("defective", "broken"), ("broken", "broken"),
+        ("for parts", "broken"), ("spares", "broken"), ("para piezas", "broken"), ("para repuestos", "broken"),
+        ("per parti di ricambio", "broken"), ("defetto", "broken"), ("gusto", "broken"), ("defect", "broken"),
+        ("capaciteit defect", "broken"), ("avaria", "broken"), ("estragado", "broken"),
+        
+        # --- Logiciels / Pilotes / Manuel / Peripheriques hors-sujet ---
+        ("dvd", "software"), ("driver", "software"), ("drivers", "software"), ("manual", "software"), ("manuel", "software"),
+        ("cd-rom", "software"), ("cdrom", "software"), ("anleitung", "software"), ("handbuch", "software"), ("guia", "software"), ("guía", "software"),
+        ("huion", "software"), ("wacom", "software"), ("xp-pen", "software"), ("xppen", "software"), ("tavoletta", "software"), ("tablette", "software"),
+        ("drawing tablet", "software"), ("grafiktablett", "software"), ("tableta grafica", "software"), ("tableta gráfica", "software")
+    ]
+    cursor.executemany("INSERT OR IGNORE INTO default_banned_words (word, category) VALUES (?, ?)", categorized_words)
     conn.commit()
     conn.close()
     logger.info("Base de données SQLite initialisée avec succès (camelCase + Mots Bannis Catégorisés).")

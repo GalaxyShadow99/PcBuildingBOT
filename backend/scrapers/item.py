@@ -40,25 +40,53 @@ class ScrapedItem:
                 
         return False
 
-    async def fetchDescription(self, client) -> bool:
-        """Charge la page de l'annonce Vinted et extrait la description depuis le bloc LD+JSON."""
+    async def fetchDescription(self, client_or_page) -> bool:
+        """Charge la page de l'annonce Vinted et extrait la description depuis le bloc LD+JSON ou le DOM."""
         import re
         import json
         try:
-            response = await client.get(self.url, timeout=10)
-            if response.status_code == 200:
-                ld_blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', response.text, re.DOTALL)
-                for block in ld_blocks:
-                    try:
-                        data = json.loads(block.strip())
-                        if isinstance(data, dict) and data.get("@type") == "Product":
-                            self.description = data.get("description", "")
-                            return True
-                    except Exception:
-                        continue
+            if hasattr(client_or_page, "goto"):
+                page = client_or_page
+                try:
+                    response = await page.goto(self.url, wait_until="domcontentloaded", timeout=10000)
+                except Exception as goto_err:
+                    from logger import logger
+                    logger.warning("⏱️ Timeout ou interruption lors du chargement de %s : %s", self.url, goto_err)
+                    return False
+
+                if response and response.status == 200:
+                    html = await page.content()
+                    ld_blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL)
+                    for block in ld_blocks:
+                        try:
+                            data = json.loads(block.strip())
+                            if isinstance(data, dict) and data.get("@type") == "Product":
+                                self.description = data.get("description", "")
+                                if self.description:
+                                    return True
+                        except Exception:
+                            continue
+                    
+                    desc_el = await page.query_selector('[itemprop="description"], [data-testid="item-description"], .item-description, [class*="item-description"]')
+                    if desc_el:
+                        self.description = (await desc_el.inner_text()).strip()
+                        return True
+            else:
+                client = client_or_page
+                response = await client.get(self.url, timeout=10)
+                if response.status_code == 200:
+                    ld_blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', response.text, re.DOTALL)
+                    for block in ld_blocks:
+                        try:
+                            data = json.loads(block.strip())
+                            if isinstance(data, dict) and data.get("@type") == "Product":
+                                self.description = data.get("description", "")
+                                return True
+                        except Exception:
+                            continue
         except Exception as e:
             from logger import logger
-            logger.error("❌ Erreur lors de la récupération de la description Vinted : %s", e)
+            logger.warning("❌ Erreur lors de la récupération de la description Vinted : %s", e)
         return False
 
     def getDealPercentage(self, maxPrice: float) -> int:

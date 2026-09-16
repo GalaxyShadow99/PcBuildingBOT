@@ -18,7 +18,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Security
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security.api_key import APIKeyHeader, APIKeyQuery
-from filters import checkTitleRelevance
+from filters import checkTitleRelevance, checkHardwareModelCompatibility
 from logger import logger
 from notifier import deleteDiscordMessage, sendDiscordNotification
 from pydantic import BaseModel
@@ -43,7 +43,8 @@ app = FastAPI(title="LBCBot API", lifespan=lifespan)
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "")
-MAX_PAGES_PER_SITE = int(os.environ.get("MAX_PAGES_PER_SITE", "1"))
+MAX_PAGES_PER_SITE = int(os.environ.get("MAX_PAGES_PER_SITE", os.environ.get("MAX_PAGES", "1")))
+MAX_VINTED_ITEMS = int(os.environ.get("MAX_VINTED_ITEMS", "30"))
 if not MAX_PAGES_PER_SITE:
     logger.fatal("MAX_PAGES_PER_SITE doit être un entier positif. Valeur actuelle : %s", MAX_PAGES_PER_SITE)
     sys.exit(1)
@@ -344,7 +345,7 @@ async def runScan(force: bool = False):
             
             if not is_vinted_cooldown:
                 try:
-                    vintedAds = await vintedScraper.scrape(keywords, maxPrice=maxPrice, maxPages=MAX_PAGES_PER_SITE)
+                    vintedAds = await vintedScraper.scrape(keywords, maxPrice=maxPrice, maxPages=MAX_PAGES_PER_SITE, maxItems=MAX_VINTED_ITEMS, browser=browser)
                     updateHealth("vinted", "OK")
                 except Exception as e:
                     logger.error("[Scan Vinted] Échec : %s", e)
@@ -413,25 +414,34 @@ async def runScan(force: bool = False):
                 if not checkTitleRelevance(titleLower, queryLower):
                     logger.warning("[Filtre Catégorie] Annonce exclue car hors-sujet : '%s'", ad.title)
                     continue
+
+                # 1d. Vérification déterministe des modèles (Chipsets H610/B85, DDR3/DDR4, SODIMM)
+                if not checkHardwareModelCompatibility(titleLower, queryLower, descriptionLower=ad.description or ""):
+                    logger.warning("[Filtre Modèle/Chipset] Annonce exclue car modèle/chipset non correspondant : '%s'", ad.title)
+                    continue
     
                 # 2. Détection des doublons en pur SQL
                 cursor.execute("SELECT 1 FROM products WHERE externalId = ?", (ad.externalId,))
                 if cursor.fetchone():
                     continue
                     
-                # 3. Analyse IA ciblée par Ollama (avec filtrage binaire is_good_deal)
-                logger.info("[Analyse IA] Interrogation d'Ollama pour '%s' (%s€)...", ad.title, ad.price)
-                aiAnalysis, aiIsGoodDeal = await analyzeDealWithOllama(
-                    title=ad.title,
-                    price=ad.price,
-                    maxPrice=maxPrice,
-                    keywords=keywords,
-                    description=ad.description
-                )
+                # 3. Analyse IA ciblée par Ollama/Llama (avec filtrage binaire is_good_deal)
+                logger.info("[Analyse IA] Interrogation de llama-server pour '%s' (%s€)...", ad.title, ad.price)
+                try:
+                    aiAnalysis, aiIsGoodDeal = await analyzeDealWithOllama(
+                        title=ad.title,
+                        price=ad.price,
+                        maxPrice=maxPrice,
+                        keywords=keywords,
+                        description=ad.description
+                    )
+                except Exception as ai_err:
+                    logger.error("[Analyse IA] Exception imprévue lors de l'appel LLM : %s", ai_err)
+                    aiAnalysis, aiIsGoodDeal = None, None
                 
-                # Si l'IA refuse (is_good_deal = False) OU si Ollama est en erreur (aiIsGoodDeal is None), on bloque la notification Discord !
+                # Si l'IA refuse (is_good_deal = False) OU si LLM est en erreur (aiIsGoodDeal is None), on bloque la notification Discord et on continue !
                 if aiIsGoodDeal is not True:
-                    logger.warning("[Filtre IA/Erreur] Annonce non retenue (is_good_deal=%s) : '%s %s'", aiIsGoodDeal, ad.title, ad.description or "")
+                    logger.warning("[Filtre IA/Erreur] Annonce non retenue (is_good_deal=%s) : '%s'", aiIsGoodDeal, ad.title)
                     continue
                 
                 # 4. Formatage et envoi de l'embed riche sur Discord

@@ -10,10 +10,13 @@ services:
     environment:
       - DATABASE_PATH=/app/data/database.db
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:8080}
+      - LLAMA_HOST=${LLAMA_HOST:-http://host.docker.internal:8080}
       - LBC_DATADOME_COOKIE=${LBC_DATADOME_COOKIE:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    dns:
+      - 8.8.8.8
     volumes:
       - ./data:/app/data  # Stockage persistant de la base de données
     ports:
@@ -33,6 +36,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - BACKEND_API_URL=http://backend:8000
     ports:
       - "9000:9000"
     depends_on:

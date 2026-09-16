@@ -9,12 +9,12 @@ def checkTitleRelevance(titleLower: str, queryLower: str) -> bool:
     if queryWords and all(word in titleLower for word in queryWords):
         return True
 
-    # 1b. Si la recherche contient un numéro de modèle à 3 ou 4 chiffres (ex: 2060, 3600),
+    # 1b. Si la recherche contient un numéro de modèle à 3, 4 ou 5 chiffres (ex: 2060, 3600, 12100),
     # et que le titre contient un AUTRE numéro de modèle, on exclut immédiatement.
     import re
-    queryNumbers = re.findall(r'\d{3,4}', queryLower)
+    queryNumbers = re.findall(r'\d{3,5}', queryLower)
     if queryNumbers:
-        titleNumbers = re.findall(r'\d{3,4}', titleLower)
+        titleNumbers = re.findall(r'\d{3,5}', titleLower)
         for num in titleNumbers:
             if num not in queryNumbers:
                 return False
@@ -77,3 +77,43 @@ def checkTitleRelevance(titleLower: str, queryLower: str) -> bool:
         return True
         
     return False
+
+
+def checkHardwareModelCompatibility(titleLower: str, queryLower: str, descriptionLower: str = "") -> bool:
+    """
+    Vérification déterministe stricte des modèles matériels, chipsets et générations de RAM en Python.
+    Évite 100% des hallucinations des petits LLM (ex: B85 pris pour H610, DDR3 prise pour DDR4).
+    """
+    full_text = (titleLower + " " + (descriptionLower or "")).lower()
+
+    # 1. Vérification des chipsets de cartes mères
+    mobo_chipsets = [
+        "h610", "b660", "b760", "z690", "z790", "h510", "b560", "z590", "h410", "b460", "z490", 
+        "h310", "b360", "b365", "z370", "z390", "h110", "b150", "b250", "z170", "z270",
+        "h81", "b85", "h87", "z87", "z97", "h77", "z77", "h61", "p67", "z68",
+        "a320", "b350", "b450", "b550", "x370", "x470", "x570", "a520", "a620", "b650", "x670"
+    ]
+    req_chipsets = [c for c in mobo_chipsets if c in queryLower]
+    if req_chipsets:
+        if not any(c in full_text for c in req_chipsets):
+            return False
+
+    # 2. Généralisation RAM DDR3 / DDR4 / DDR5
+    if "ddr4" in queryLower and "ddr4" not in full_text:
+        if "ddr3" in full_text or "ddr5" in full_text:
+            return False
+    if "ddr5" in queryLower and "ddr5" not in full_text:
+        if "ddr4" in full_text or "ddr3" in full_text:
+            return False
+    if "ddr3" in queryLower and "ddr3" not in full_text:
+        if "ddr4" in full_text or "ddr5" in full_text:
+            return False
+
+    # 3. Format SODIMM / Portable vs PC Fixe pour la RAM
+    has_ram_kw = any(k in queryLower for k in ["ram", "ddr", "memoire", "mémoire"])
+    has_sodimm_kw = any(k in queryLower for k in ["sodimm", "so-dimm", "portable", "laptop", "notebook"])
+    if has_ram_kw and not has_sodimm_kw:
+        if any(k in full_text for k in ["sodimm", "so-dimm", "pc portable", "laptop", "notebook"]):
+            return False
+
+    return True

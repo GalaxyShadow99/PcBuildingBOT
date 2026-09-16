@@ -9,13 +9,12 @@ from pydantic import BaseModel
 load_dotenv()
 
 # Par défaut sur llama-server, le port est 8080 (ou configuré via --port)
-LLAMA_HOST = os.environ.get("LLAMA_HOST", "http://localhost:8080")
+LLAMA_HOST = os.environ.get("LLAMA_HOST") or os.environ.get("OLLAMA_HOST") or "http://host.docker.internal:8080"
 
 if not LLAMA_HOST.startswith("http://") and not LLAMA_HOST.startswith("https://"):
     LLAMA_HOST = f"http://{LLAMA_HOST}"
 
 # Client compatible OpenAI ciblant llama-server
-# api_key est requise par le SDK OpenAI mais llama-server n'en a pas besoin par défaut
 client = AsyncOpenAI(
     base_url=f"{LLAMA_HOST}/v1",
     api_key="no-key-required",
@@ -32,89 +31,135 @@ class DealResponse(BaseModel):
 async def analyzeDealWithLlama(title: str, price: float, maxPrice: float, keywords: str, description: str = None) -> tuple[str, bool]:
     """
     Envoie les détails de l'annonce à llama-server via l'API OpenAI avec 
-    contrainte de grammaire JSON via Pydantic.
+    réponse structurée Pydantic binaire (is_good_deal: bool).
+    Le prompt est assoupli pour la RAM et reste strict pour les autres composants.
     """
     kw_lower = keywords.lower()
-    
-    if any(gpu_term in kw_lower for gpu_term in ["rtx", "gtx", "rx", "gpu", "carte graphique", "graphics card"]):
-        specific_rules = """
-EXIGENCES CARTE GRAPHIQUE (GPU) :
-1. Toute vraie carte graphique équipée de la puce recherchée (ex: RTX 2060, peu importe la marque Asus, MSI, Gigabyte, Zotac, Palit, EVGA, etc.) EST 100% VALIDE -> `is_good_deal = true`.
-2. Si l'annonce ne vend QUE le ventirad, le refroidisseur, la backplate ou la boîte vide ("box only", "boite vide", "caja vacia") sans la carte graphique physique -> REJET (`is_good_deal = false`).
-"""
-    elif any(ram_term in kw_lower for ram_term in ["ram", "ddr", "ddr4", "ddr5", "sodimm", "8go", "16go", "32go"]):
-        specific_rules = f"""
-EXIGENCES MÉMOIRE VIVE (RAM) :
-1. CAPACITÉ RÉELLE : La capacité totale vendue doit correspondre à la recherche "{keywords}". Si l'annonce vend moins de capacité (ex: 4Go au lieu de 16Go) -> REJET (`is_good_deal = false`).
-2. FIXE VS PORTABLE : Si la recherche est pour PC Fixe et que l'annonce vend du PC Portable / SODIMM / Laptop -> REJET (`is_good_deal = false`).
+    is_ram_search = any(ram_term in kw_lower for ram_term in ["ram", "ddr", "ddr4", "ddr5", "sodimm", "8go", "16go", "32go"])
+
+    if is_ram_search:
+        has_sodimm_kw = any(term in kw_lower for term in ["sodimm", "so-dimm", "portable", "laptop", "notebook"])
+        sodimm_rule = "Format SODIMM/portable autorisé." if has_sodimm_kw else "REJETTE (`is_good_deal = false`) si la RAM est au format SODIMM / PC portable / Laptop car la recherche est pour PC fixe."
+
+        prompt = f"""Tu es un assistant de filtrage de mémoire vive (RAM) d'occasion.
+
+RECHERCHE : {keywords}
+TITRE : {title}
+DESCRIPTION : {description if description else "Aucune"}
+
+RÈGLES DÉCISION :
+1. Valide l'annonce -> `is_good_deal = true` si c'est une RAM fonctionnelle correspondant au type recherché.
+2. REJETTE (`is_good_deal = false`) si :
+   - C'est de la DDR3 alors que la recherche est DDR4 (ou vice versa).
+   - {sodimm_rule}
+   - Matériel défectueux, HS ou boîte vide.
+
+EXEMPLE VALIDE :
+Recherche: "16 Go DDR4" | Titre: "Barrette RAM Corsair 16Go DDR4 3200MHz" -> `is_good_deal = true`
+
+EXEMPLE REJETÉ :
+Recherche: "16 Go DDR4" | Titre: "Barrette RAM Sodimm DDR3 4Go Portable" -> `is_good_deal = false`
+
+Sois très concis (1 phrase max par champ).
 """
     else:
-        specific_rules = """
-EXIGENCES GÉNÉRALES COMPOSANTS PC :
-1. L'annonce doit proposer une vraie pièce informatique fonctionnelle et cohérente avec la recherche.
-2. Si c'est un accessoire sans rapport, un meuble, un jeu ou un objet hors-sujet -> REJET (`is_good_deal = false`).
+        if any(gpu_term in kw_lower for gpu_term in ["rtx", "gtx", "rx", "gpu", "carte graphique", "graphics card"]):
+            prompt = f"""Tu es un assistant de validation de cartes graphiques (GPU) d'occasion.
+
+RECHERCHE : {keywords}
+TITRE : {title}
+DESCRIPTION : {description if description else "Aucune"}
+
+RÈGLES DÉCISION :
+1. VALIDE (`is_good_deal = true`) toute vraie carte graphique équipée du processeur graphique recherché (ex: RTX 3080).
+   ATTENTION : Les marques et modèles des constructeurs (ex: Gainward Phoenix, EVGA FTW3, MSI Ventus, Gigabyte Gaming OC, Asus TUF, Zotac) SONT 100% VALIDES si la puce GPU correspond !
+2. REJETTE (`is_good_deal = false`) uniquement si :
+   - C'est seulement une boîte vide, un ventirad seul ou une backplate sans la carte graphique.
+   - C'est un GPU totalement différent (ex: RTX 3060 alors que la recherche est RTX 3080).
+   - Le composant est HS ou en panne.
+
+EXEMPLE VALIDE :
+Recherche: "RTX 3080" | Titre: "Gainward GeForce RTX 3080 Phoenix 10GB" -> `is_good_deal = true` (Raison: C'est bien une RTX 3080 de marque Gainward)
+
+EXEMPLE REJETÉ :
+Recherche: "RTX 3080" | Titre: "Boîte seule RTX 3080 sans carte" -> `is_good_deal = false`
+
+Sois très concis (1 phrase max par champ).
 """
+        elif any(cpu_term in kw_lower for cpu_term in ["i3", "i5", "i7", "i9", "ryzen", "cpu", "processeur"]):
+            prompt = f"""Tu es un assistant de validation de processeurs (CPU) d'occasion.
 
-    prompt = f"""Tu es un assistant de filtrage hardware d'occasion.
-Ton UNIQUE rôle est de vérifier si l'annonce correspond exactement au composant PC recherché.
+RECHERCHE : {keywords}
+TITRE : {title}
+DESCRIPTION : {description if description else "Aucune"}
 
-DONNÉES ANNONCE À ANALYSER :
-- Composant recherché : {keywords}
-- Titre annonce : {title}
-- Description : {description if description else "Aucune"}
+RÈGLES DÉCISION :
+1. VALIDE (`is_good_deal = true`) uniquement si l'annonce propose EXACTEMENT le modèle et la génération de processeur recherchés (ex: i3 12100 pour i3 12100, Ryzen 5 5600 pour Ryzen 5 5600).
+2. REJETTE (`is_good_deal = false`) impérativement si :
+   - C'est un modèle de génération ou référence différente (ex: i3-8100, i3-9100 ou i3-10100F alors que la recherche est i3 12100, ou Ryzen 3600 alors que la recherche est Ryzen 5600).
+   - C'est une gamme différente (ex: i5 au lieu de i3, ou Ryzen 7 au lieu de Ryzen 5).
+   - C'est seulement un ventirad/refroidisseur seul (ex: Wraith Stealth, cooler), une boîte vide sans processeur, ou un processeur HS/défectueux.
 
-=====================================================
-EXEMPLES DE DÉCISIONS À SUIVRE (FEW-SHOT) :
-=====================================================
+EXEMPLE VALIDE :
+Recherche: "i3 12100" | Description: "Processeur Intel Core i3 12100F socket LGA1700" -> `is_good_deal = true` (Raison: Modèle exact i3 12100)
 
---- EXEMPLE 1 (VALIDE - Boîte non originale) ---
-Recherche : "Ryzen 5 3600"
-Titre : "Processeur AMD Ryzen 5 3600"
-Description : "Processeur en très bon état. La boîte n'est pas celle d'origine. Le processeur fonctionne très bien."
--> Décision : `is_good_deal = true` (Raison: Le processeur Ryzen 5 3600 est vendu fonctionnel, peu importe le carton d'emballage)
+EXEMPLE REJETÉ :
+Recherche: "i3 12100" | Description: "Processeur Intel Core i3 8100" -> `is_good_deal = false` (Raison: Génération 8100 différente de 12100 recherché)
 
---- EXEMPLE 2 (VALIDE - Annonce en italien/espagnol) ---
-Recherche : "Ryzen 5 3600"
-Titre : "Cpu Amd ryzen 5 3600"
-Description : "Cpu perfettamente funzionante, perfette condizioni e pronta all'uso!"
--> Décision : `is_good_deal = true` (Raison: C'est le processeur Ryzen 5 3600 exact en parfait état)
+Sois très concis (1 phrase max par champ).
+"""
+        else:
+            prompt = f"""Tu es un assistant de filtrage de composants PC d'occasion.
 
---- EXEMPLE 3 (REJETÉ - Boîte vide) ---
-Recherche : "RTX 2060"
-Titre : "Boite vide RTX 2060"
-Description : "Seulement la boîte en carton sans la carte graphique."
--> Décision : `is_good_deal = false` (Raison: Boîte vide sans composant)
+RECHERCHE : {keywords}
+TITRE : {title}
+DESCRIPTION : {description if description else "Aucune"}
 
---- EXEMPLE 4 (REJETÉ - Modèle différent) ---
-Recherche : "GTX 1660"
-Titre : "Carte graphique GTX 1660 Super"
-Description : "Vend carte graphique 1660 Super 6Go"
--> Décision : `is_good_deal = false` (Raison: GTX 1660 Super n'est pas la GTX 1660 exacte)
+RÈGLES DÉCISION :
+1. VALIDE (`is_good_deal = true`) si l'annonce propose le composant informatique recherché en état fonctionnel.
+2. REJETTE (`is_good_deal = false`) si l'annonce est hors-sujet, un accessoire sans rapport, un matériel HS ou une boîte vide.
 
-=====================================================
-RÈGLES STRICTES :
-=====================================================
-1. Si le composant exact est présent et fonctionnel -> `is_good_deal = true` (MÊME si la boîte n'est pas originale ou si la description est en italien/espagnol).
-2. Si le modèle varie (ex: Super, Ti au lieu de la recherche de base), si c'est une boîte vide ou du matériel HS -> `is_good_deal = false`.
-{specific_rules}
+Sois très concis (1 phrase max par champ).
 """
 
     try:
         response = await client.chat.completions.create(
-            # llama-server charge déjà le modèle en mémoire, ce champ est indicatif
             model="local-model",
             messages=[{'role': 'user', 'content': prompt}],
-            temperature=0.2,
-            # Force la sortie JSON stricte respectant le schéma Pydantic via la grammaire de llama.cpp
+            temperature=0.1,
             response_format={
-                "type": "json_object",
-                "schema": DealResponse.model_json_schema()
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "DealResponse",
+                    "strict": True,
+                    "schema": DealResponse.model_json_schema()
+                }
             },
-            max_tokens=256
+            max_tokens=1024
         )
         
         raw_content = response.choices[0].message.content
-        parsed = DealResponse.model_validate_json(raw_content)
+        if not raw_content:
+            logger.warning("⚠️ Réponse vide reçue de llama-server.")
+            return None, None
+
+        try:
+            parsed = DealResponse.model_validate_json(raw_content)
+        except Exception as val_err:
+            import json
+            import re
+            logger.warning("⚠️ Échec du parsing Pydantic direct, tentative de récupération du JSON : %s", val_err)
+            match = re.search(r'\{.*\}', raw_content, re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+                parsed = DealResponse(
+                    is_good_deal=bool(data.get("is_good_deal", False)),
+                    reason=str(data.get("reason", "Analyse automatique")),
+                    short_advice=str(data.get("short_advice", "Vérifier l'annonce"))
+                )
+            else:
+                raise val_err
+
         logger.info("[Llama Analysis OK] Valide: %s | Raison: %s", parsed.is_good_deal, parsed.reason)
         
         status_icon = "Bonne affaire" if parsed.is_good_deal else "À éviter"
@@ -128,3 +173,7 @@ RÈGLES STRICTES :
     except Exception as e:
         logger.warning("⚠️ Impossible d'analyser l'annonce avec llama-server sur %s : [%s] %s", LLAMA_HOST, type(e).__name__, e or repr(e))
         return None, None
+
+
+# Alias pour rétrocompatibilité
+analyzeDealWithOllama = analyzeDealWithLlama
