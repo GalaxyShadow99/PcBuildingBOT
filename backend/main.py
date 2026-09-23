@@ -12,17 +12,17 @@ from random import randint
 from typing import Any
 
 import uvicorn
-from camoufox.async_api import AsyncCamoufox
-from database import *
+from database import deleteDB, getDbConnection, initDb
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Security
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security.api_key import APIKeyHeader, APIKeyQuery
-from filters import checkTitleRelevance, checkHardwareModelCompatibility
+from filters import checkHardwareModelCompatibility, checkTitleRelevance
 from logger import logger
 from notifier import deleteDiscordMessage, sendDiscordNotification
 from pydantic import BaseModel
-from scrapers import LeBonCoinScraper, VintedScraper
+from scrapers import VintedScraper
+from scrapers.item import ScrapedItem
 from services.ai_analyzer import analyzeDealWithOllama
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from dotenv import load_dotenv
@@ -59,7 +59,10 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 def verifyApiKey(key: str = Depends(api_key_header)):
     if not API_SECRET_KEY:
-        return
+        raise HTTPException(
+                    status_code=401,
+                    detail="Clé API non configurée."
+                )
     if key != API_SECRET_KEY:
         raise HTTPException(
             status_code=401,
@@ -75,12 +78,6 @@ def apiResponse(success: bool, data: Any = None, error: str = None):
     }
 
 SCRAPER_HEALTH = {
-    "leboncoin": {
-        "status": "Inconnu",
-        "last_scrape": None,
-        "error": None,
-        "cooldown_until": None
-    },
     "vinted": {
         "status": "Inconnu",
         "last_scrape": None,
@@ -108,7 +105,7 @@ def updateHealth(site: str, status: str, error_msg: str = None, cooldown_mins: i
 
 async def updateHealthAuto():
     """
-    Effectue un ping de test réseau sur les scrapers qui sont en statut d'erreur ou de blocage (non OK).
+    Effectue un ping de test réseau sur Vinted.
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -130,39 +127,6 @@ async def updateHealthAuto():
                     logger.warning("[Ping Test] Vinted toujours bloqué (HTTP 403). Cooldown maintenu.")
         except Exception as e:
             logger.error("[Ping Test] Échec du ping Vinted : %s", e)
-
-    # 2. Ping LeBonCoin uniquement s'il n'est pas OK
-    if SCRAPER_HEALTH["leboncoin"]["status"] != "OK":
-        logger.info("[Ping Test] Test de connexion réseau en cours sur LeBonCoin via Camoufox...")
-        try:
-            from camoufox.async_api import AsyncCamoufox
-            from scrapers.lbc import get_datadome_cookie
-            async with AsyncCamoufox(headless=True) as browser:
-                contexts = browser.contexts
-                context = contexts[0] if contexts else await browser.new_context()
-                cookie_val = get_datadome_cookie()
-                if cookie_val:
-                    await context.add_cookies([{
-                        "name": "datadome",
-                        "value": cookie_val,
-                        "domain": ".leboncoin.fr",
-                        "path": "/",
-                        "httpOnly": True,
-                        "secure": True,
-                        "sameSite": "Lax"
-                    }])
-                    logger.info("[Ping Test LBC] Cookie Datadome injecté pour le ping test.")
-                page = await context.new_page()
-                res = await page.goto("https://www.leboncoin.fr/recherche?category=15&text=rtx", wait_until="domcontentloaded", timeout=15000)
-                if res and res.status == 200:
-                    updateHealth("leboncoin", "OK")
-                    logger.info("[Ping Test] LeBonCoin accessible (HTTP 200) ! Statut rétabli à OK.")
-                elif res and res.status == 403:
-                    updateHealth("leboncoin", "Bloqué (403)", "Code HTTP 403 sur le ping de test", cooldown_mins=30)
-                    logger.warning("[Ping Test] LeBonCoin toujours bloqué (HTTP 403). Cooldown maintenu.")
-                await page.close()
-        except Exception as e:
-            logger.error("[Ping Test] Échec du ping LeBonCoin : %s", e)
 
 async def runPeriodicHealthCheck():
     """Tâche de fond qui teste la santé des scrapers toutes les 5 minutes."""
@@ -212,32 +176,7 @@ class WatchlistUpdate(BaseModel):
     customBannedWords: list[str] = []
 
 # Instanciation des scrapers
-lbcScraper = LeBonCoinScraper()
 vintedScraper = VintedScraper()
-
-async def fetchLbcDescription(url: str, browser) -> str:
-    """Ouvre temporairement l'URL de l'annonce LBC pour en extraire la description."""
-    if not url:
-        return ""
-    page = await browser.new_page()
-    try:
-        response = await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-        if response.status == 200:
-            html = await page.content()
-            startMarker = 'id="__NEXT_DATA__"'
-            if startMarker in html:
-                startPos = html.find(startMarker)
-                jsonStart = html.find('>', startPos) + 1
-                jsonEnd = html.find('</script>', jsonStart)
-                rawJsonStr = html[jsonStart:jsonEnd]
-                rawJson = json.loads(rawJsonStr)
-                ad_details = rawJson.get("props", {}).get("pageProps", {}).get("ad", {})
-                return ad_details.get("description", "")
-    except Exception as e:
-        logger.error("Erreur lors de la récupération de la description LBC : %s", e)
-    finally:
-        await page.close()
-    return ""
 
 DISCORD_MAX_MESSAGES = 25
 
@@ -279,7 +218,7 @@ def cleanupOldDiscordMessages():
 async def runScan(force: bool = False):
     """Effectue un cycle de scan sur toute la watchlist active"""
     logger.info("Début du cycle de scan global...")
-    
+    start_time = time.perf_counter()
     # Récupération des recherches actives en unpacking de tuples
     conn = getDbConnection()
     cursor = conn.cursor()
@@ -295,192 +234,171 @@ async def runScan(force: bool = False):
         logger.info("Aucune recherche active dans la watchlist.")
         return
      
-    # On ouvre le navigateur Camoufox UNE SEULE fois pour tout le cycle de scan LBC
-    async with AsyncCamoufox(headless=True) as browser:
-        for itemId, keywords, maxPrice, category, useDefaultBannedWords in activeItems:
-            logger.info("Scan de '%s' (max %s€)...", keywords, maxPrice)
-            
-            # Récupération des mots bannis spécifiques pour cette recherche
-            conn = getDbConnection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT word FROM watchlist_banned_words WHERE watchlistId = ?", (itemId,))
-            customBannedWords = [row[0].lower() for row in cursor.fetchall()]
-            conn.close()
-            
-            # Construction de la banlist finale pour cet élément
-            bannedWords = list(customBannedWords)
-            if useDefaultBannedWords:
-                bannedWords.extend(defaultBannedWords)
-            
-            # Scraping asynchrone sécurisé pour le health check (LeBonCoin)
-            is_lbc_cooldown = False
-            lbc_cooldown_str = SCRAPER_HEALTH["leboncoin"].get("cooldown_until")
-            if lbc_cooldown_str and not force:
-                cooldown_dt = datetime.fromisoformat(lbc_cooldown_str)
-                if datetime.utcnow() < cooldown_dt:
-                    is_lbc_cooldown = True
-                    logger.info("[Scan LBC] Ignoré (cooldown actif suite à un ban 403)")
-            
-            if not is_lbc_cooldown:
-                try:
-                    lbcAds = await lbcScraper.scrape(keywords, category, browser=browser,maxPages=MAX_PAGES_PER_SITE)
-                    updateHealth("leboncoin", "OK")
-                except Exception as e:
-                    logger.error("[Scan LBC] Échec : %s", e)
-                    status_msg = "Bloqué (403)" if "403" in str(e) else "Erreur"
-                    cooldown_mins = 30 if "403" in str(e) else 0
-                    updateHealth("leboncoin", status_msg, str(e), cooldown_mins=cooldown_mins)
-                    lbcAds = []
-            else:
-                lbcAds = []
- 
-            # Scraping asynchrone sécurisé pour le health check (Vinted)
-            is_vinted_cooldown = False
-            vinted_cooldown_str = SCRAPER_HEALTH["vinted"].get("cooldown_until")
-            if vinted_cooldown_str and not force:
-                cooldown_dt = datetime.fromisoformat(vinted_cooldown_str)
-                if datetime.utcnow() < cooldown_dt:
-                    is_vinted_cooldown = True
-                    logger.info("[Scan Vinted] Ignoré (cooldown actif suite à un ban 403)")
-            
-            if not is_vinted_cooldown:
-                try:
-                    vintedAds = await vintedScraper.scrape(keywords, maxPrice=maxPrice, maxPages=MAX_PAGES_PER_SITE, maxItems=MAX_VINTED_ITEMS, browser=browser)
-                    updateHealth("vinted", "OK")
-                except Exception as e:
-                    logger.error("[Scan Vinted] Échec : %s", e)
-                    status_msg = "Bloqué (403)" if "403" in str(e) else "Erreur"
-                    cooldown_mins = 30 if "403" in str(e) else 0
-                    updateHealth("vinted", status_msg, str(e), cooldown_mins=cooldown_mins)
-                    vintedAds = []
-            else:
-                vintedAds = []
-            
-            # Vinted et LBC retournent déjà des objets ScrapedItem typés avec l'attribut site défini
-            allAds = lbcAds + vintedAds
-                
-            newFinds = 0
-            conn = getDbConnection()
-            cursor = conn.cursor()
-            
-            for ad in allAds:
-                # Filtrage par le prix max
-                if ad.price > maxPrice:
-                    continue
-                    
-                # Détection et chargement forcé de la description LBC si le prix est suspect (< 30% du prix max)
-                is_suspicious_price = maxPrice is not None and ad.price < (0.3 * maxPrice)
-                if is_suspicious_price and ad.site == "leboncoin" and not ad.description:
-                    logger.info("Prix suspect LBC détecté (%s€). Chargement de la description pour vérification...", ad.price)
-                    ad.description = await fetchLbcDescription(ad.url, browser)
-                    
-                # 1. Exclusion automatique du matériel HS / panne
-                if ad.isBroken():
-                    logger.warning("[Filtre HS/Boîte] Annonce de matériel défectueux ou emballage ignorée : '%s'", ad.title)
-                    continue
-    
-                # 1b. Exclusion dynamique via banlist (globale + spécifique)
-                titleLower = ad.title.lower()
-                queryLower = keywords.lower()
-                
-                banned_match = None
-                for word in bannedWords:
-                    wordLower = word.lower().strip()
-                    if not wordLower:
-                        continue
-                    # Si le mot banni est présent et n'était pas recherché par l'utilisateur
-                    if wordLower in titleLower and wordLower not in queryLower:
-                        banned_match = wordLower
-                        break
-                            
-                if banned_match:
-                    logger.warning("[Filtre Banword] Annonce contenant le mot banni (%s) ignorée : '%s'", banned_match, ad.title)
-                    continue
-    
-                # 1bb. Détection spécifique des boîtes / emballages vides (multi-langues)
-                boxWords = ["boite", "boîte", "box", "caja", "scatolo", "scatola", "karton", "ovp", "vacia", "vacía", "empty", "caixa"]
-                isBox = False
-                for word in boxWords:
-                    if word in titleLower and word not in queryLower:
-                        possessionWords = ["avec", "dans sa", "dans son", "with", "in", "con", "mit"]
-                        if not any(posWord in titleLower for posWord in possessionWords):
-                            isBox = True
-                            break
-                if isBox:
-                    logger.warning("[Filtre Boîte] Annonce d'emballage vide suspectée ignorée : '%s'", ad.title)
-                    continue
-    
-                # 1c. Vérification de la pertinence de la catégorie du composant (Soft Match)
-                if not checkTitleRelevance(titleLower, queryLower):
-                    logger.warning("[Filtre Catégorie] Annonce exclue car hors-sujet : '%s'", ad.title)
-                    continue
+    for itemId, keywords, maxPrice, category, useDefaultBannedWords in activeItems:
+        logger.info("Scan de '%s' (max %s€)...", keywords, maxPrice)
+        
+        # Récupération des mots bannis spécifiques pour cette recherche
+        conn = getDbConnection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT word FROM watchlist_banned_words WHERE watchlistId = ?", (itemId,))
+        customBannedWords = [row[0].lower() for row in cursor.fetchall()]
+        conn.close()
+        
+        # Construction de la banlist finale pour cet élément
+        bannedWords = list(customBannedWords)
+        if useDefaultBannedWords:
+            bannedWords.extend(defaultBannedWords)
 
-                # 1d. Vérification déterministe des modèles (Chipsets H610/B85, DDR3/DDR4, SODIMM)
-                if not checkHardwareModelCompatibility(titleLower, queryLower, descriptionLower=ad.description or ""):
-                    logger.warning("[Filtre Modèle/Chipset] Annonce exclue car modèle/chipset non correspondant : '%s'", ad.title)
-                    continue
-    
-                # 2. Détection des doublons en pur SQL
-                cursor.execute("SELECT 1 FROM products WHERE externalId = ?", (ad.externalId,))
-                if cursor.fetchone():
-                    continue
+        # Scraping asynchrone sécurisé pour le health check (Vinted)
+        is_vinted_cooldown = False
+        vinted_cooldown_str = SCRAPER_HEALTH["vinted"].get("cooldown_until")
+        if vinted_cooldown_str and not force:
+            cooldown_dt = datetime.fromisoformat(vinted_cooldown_str)
+            if datetime.utcnow() < cooldown_dt:
+                is_vinted_cooldown = True
+                logger.info("[Scan Vinted] Ignoré (cooldown actif suite à un ban 403)")
+        
+        if not is_vinted_cooldown:
+            try:
+                vintedAds = await vintedScraper.scrape(keywords, maxPrice=maxPrice, maxPages=MAX_PAGES_PER_SITE, maxItems=MAX_VINTED_ITEMS)
+                updateHealth("vinted", "OK")
+            except Exception as e:
+                logger.error("[Scan Vinted] Échec : %s", e)
+                status_msg = "Bloqué (403)" if "403" in str(e) else "Erreur"
+                cooldown_mins = 30 if "403" in str(e) else 0
+                updateHealth("vinted", status_msg, str(e), cooldown_mins=cooldown_mins)
+                vintedAds = []
+        else:
+            vintedAds = []
+        
+        allAds = vintedAds
+            
+        newFinds = 0
+        conn = getDbConnection()
+        cursor = conn.cursor()
+        
+        for ad in allAds:
+            # Filtrage par le prix max
+            if maxPrice and ad.price > maxPrice:
+                continue
                     
-                # 3. Analyse IA ciblée par Ollama/Llama (avec filtrage binaire is_good_deal)
-                logger.info("[Analyse IA] Interrogation de llama-server pour '%s' (%s€)...", ad.title, ad.price)
-                try:
-                    aiAnalysis, aiIsGoodDeal = await analyzeDealWithOllama(
-                        title=ad.title,
-                        price=ad.price,
-                        maxPrice=maxPrice,
-                        keywords=keywords,
-                        description=ad.description
-                    )
-                except Exception as ai_err:
-                    logger.error("[Analyse IA] Exception imprévue lors de l'appel LLM : %s", ai_err)
-                    aiAnalysis, aiIsGoodDeal = None, None
-                
-                # Si l'IA refuse (is_good_deal = False) OU si LLM est en erreur (aiIsGoodDeal is None), on bloque la notification Discord et on continue !
-                if aiIsGoodDeal is not True:
-                    logger.warning("[Filtre IA/Erreur] Annonce non retenue (is_good_deal=%s) : '%s'", aiIsGoodDeal, ad.title)
+            # 1. Exclusion automatique du matériel HS / panne
+            if ad.isBroken():
+                logger.warning("[Filtre HS/Boîte] Annonce de matériel défectueux ou emballage ignorée : '%s'", ad.title)
+                continue
+
+            # 1b. Exclusion dynamique via banlist (globale + spécifique)
+            titleLower = ad.title.lower()
+            queryLower = keywords.lower()
+            
+            banned_match = None
+            for word in bannedWords:
+                wordLower = word.lower().strip()
+                if not wordLower:
                     continue
+                # Si le mot banni est présent et n'était pas recherché par l'utilisateur
+                if wordLower in titleLower and wordLower not in queryLower:
+                    banned_match = wordLower
+                    break
+                        
+            if banned_match:
+                logger.warning("[Filtre Banword] Annonce contenant le mot banni (%s) ignorée : '%s'", banned_match, ad.title)
+                continue
+
+            # 1bb. Détection spécifique des boîtes / emballages vides (multi-langues)
+            boxWords = ["boite", "boîte", "box", "caja", "scatolo", "scatola", "karton", "ovp", "vacia", "vacía", "empty", "caixa"]
+            isBox = False
+            for word in boxWords:
+                if word in titleLower and word not in queryLower:
+                    possessionWords = ["avec", "dans sa", "dans son", "with", "in", "con", "mit"]
+                    if not any(posWord in titleLower for posWord in possessionWords):
+                        isBox = True
+                        break
+            if isBox:
+                logger.warning("[Filtre Boîte] Annonce d'emballage vide suspectée ignorée : '%s'", ad.title)
+                continue
+
+            # 1c. Vérification de la pertinence de la catégorie du composant (Soft Match)
+            if not checkTitleRelevance(titleLower, queryLower):
+                logger.warning("[Filtre Catégorie] Annonce exclue car hors-sujet : '%s'", ad.title)
+                continue
+
+            # 1d. Vérification déterministe des modèles (Chipsets H610/B85, DDR3/DDR4, SODIMM)
+            if not checkHardwareModelCompatibility(titleLower, queryLower, descriptionLower=ad.description or ""):
+                logger.warning("[Filtre Modèle/Chipset] Annonce exclue car modèle/chipset non correspondant : '%s'", ad.title)
+                continue
+
+            # 2. Détection des doublons et des annonces bannies manuellement en pur SQL
+            cursor.execute("SELECT 1 FROM annonce_banlist WHERE externalId = ?", (ad.externalId,))
+            if cursor.fetchone():
+                logger.warning("[Filtre Banlist Annonce] Annonce bannie manuellement ignorée : '%s'", ad.title)
+                continue
+
+            cursor.execute("SELECT 1 FROM products WHERE externalId = ?", (ad.externalId,))
+            if cursor.fetchone():
+                continue
+
+            if getattr(ad, "isSold", False):
+                logger.warning("[Filtre Dispo] Annonce déjà vendue / indisponible sur Vinted, ignorée : '%s'", ad.title)
+                continue
                 
-                # 4. Formatage et envoi de l'embed riche sur Discord
-                embedPayload = ad.toDiscordEmbed(maxPrice, keywords, aiAnalysis=aiAnalysis)
-                msgId = sendDiscordNotification(DISCORD_WEBHOOK_URL, embedPayload)
-                
-                # 5. Enregistrement en base de données avec le message ID Discord et la description complète
-                notifiedAtStr = datetime.utcnow().isoformat()
-                cursor.execute("""
-                    INSERT INTO products 
-                    (watchlistId, site, externalId, title, price, url, imageUrl, description, publishedAt, notifiedAt, discordMessageId)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    itemId,
-                    ad.site,
-                    ad.externalId,
-                    ad.title,
-                    ad.price,
-                    ad.url,
-                    ad.imageUrl,
-                    ad.description,
-                    ad.publishedAt,
-                    notifiedAtStr,
-                    msgId
-                ))
-                conn.commit()
-                
-                newFinds += 1
-                await asyncio.sleep(randint(1, 5)) # Pause anti-rate-limit Discord
-                
-            conn.close()
-            logger.info("Terminé. %s nouvelles annonces sous le prix max.", newFinds)
+            # 3. Analyse IA ciblée par Ollama/Llama (avec filtrage binaire is_good_deal)
+            logger.info("[Analyse IA] Interrogation de llama-server pour '%s' (%s€)...", ad.title, ad.price)
+            try:
+                aiAnalysis, aiIsGoodDeal = await analyzeDealWithOllama(
+                    title=ad.title,
+                    price=ad.price,
+                    maxPrice=maxPrice,
+                    keywords=keywords,
+                    description=ad.description
+                )
+            except Exception as ai_err:
+                logger.error("[Analyse IA] Exception imprévue lors de l'appel LLM : %s", ai_err)
+                aiAnalysis, aiIsGoodDeal = None, None
             
-            # Nettoyage des anciens messages Discord après chaque recherche
-            cleanupOldDiscordMessages()
+            # Si l'IA refuse (is_good_deal = False) OU si LLM est en erreur (aiIsGoodDeal is None), on bloque la notification Discord et on continue !
+            if aiIsGoodDeal is not True:
+                logger.warning("[Filtre IA/Erreur] Annonce non retenue (is_good_deal=%s) : '%s'", aiIsGoodDeal, ad.title)
+                continue
             
-            await asyncio.sleep(5)
+            # 4. Formatage et envoi de l'embed riche sur Discord
+            embedPayload = ad.toDiscordEmbed(maxPrice, keywords, aiAnalysis=aiAnalysis)
+            msgId = sendDiscordNotification(DISCORD_WEBHOOK_URL, embedPayload)
             
-    logger.info("Fin du cycle de scan global.")
+            # 5. Enregistrement en base de données avec le message ID Discord et la description complète
+            notifiedAtStr = datetime.utcnow().isoformat()
+            cursor.execute("""
+                INSERT INTO products 
+                (watchlistId, site, externalId, title, price, url, imageUrl, description, publishedAt, notifiedAt, discordMessageId, isSold)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                itemId,
+                ad.site,
+                ad.externalId,
+                ad.title,
+                ad.price,
+                ad.url,
+                ad.imageUrl,
+                ad.description,
+                ad.publishedAt,
+                notifiedAtStr,
+                msgId,
+                1 if getattr(ad, "isSold", False) else 0
+            ))
+            conn.commit()
+            
+            newFinds += 1
+            await asyncio.sleep(randint(1, 5)) # Pause anti-rate-limit Discord
+            
+        conn.close()
+        logger.info("Terminé. %s nouvelles annonces sous le prix max.", newFinds)
+        
+        # Nettoyage des anciens messages Discord après chaque recherche
+        cleanupOldDiscordMessages()
+        
+        await asyncio.sleep(5)
+    end_time = time.perf_counter()
+    logger.info(f"Fin du cycle de scan global | Durée : {end_time - start_time:0.4f} sec ")
 
 async def runPeriodicScans():
     while True:
@@ -488,14 +406,16 @@ async def runPeriodicScans():
             await runScan()
         except Exception as e:
             logger.exception("Erreur critique dans runPeriodicScans : %s", e, exc_info=True)
-        await asyncio.sleep(60*10)  # Pause de 10 minutes // sinon BAN 
+        await asyncio.sleep(60*2) # pause de 2 minutes 
 
 @app.get("/health")
 def getHealth():
+    """Endpoint GET retournant l'état de santé et de cooldown des scrapers."""
     return apiResponse(True, data=SCRAPER_HEALTH)
 
 @app.get("/banned-words/presets")
 def getBannedWordsPresets():
+    """Endpoint GET retournant les mots bannis par défaut catégorisés."""
     conn = getDbConnection()
     cursor = conn.cursor()
     cursor.execute("SELECT word, category FROM default_banned_words")
@@ -512,6 +432,7 @@ def getBannedWordsPresets():
 
 @app.get("/watchlist")
 def getWatchlist():
+    """Endpoint GET retournant la liste complète des recherches sous surveillance."""
     conn = getDbConnection()
     cursor = conn.cursor()
     cursor.execute("SELECT id, keywords, maxPrice, category, enabled, useDefaultBannedWords FROM watchlist")
@@ -537,6 +458,7 @@ def getWatchlist():
 
 @app.post("/watchlist", dependencies=[Depends(verifyApiKey)])
 def addToWatchlist(data: WatchlistCreate):
+    """Enregistre un nouvel élément dans la watchlist."""
     conn = getDbConnection()
     cursor = conn.cursor()
     try:
@@ -573,6 +495,7 @@ def addToWatchlist(data: WatchlistCreate):
 
 @app.patch("/watchlist/{itemId}/toggle", dependencies=[Depends(verifyApiKey)])
 def toggleWatchlistItem(itemId: int):
+    """Bascule l'état actif/désactivé d'une recherche dans la watchlist."""
     conn = getDbConnection()
     cursor = conn.cursor()
     try:
@@ -593,6 +516,7 @@ def toggleWatchlistItem(itemId: int):
 
 @app.put("/watchlist/{itemId}", dependencies=[Depends(verifyApiKey)])
 def updateWatchlistItem(itemId: int, data: WatchlistUpdate):
+    """Met à jour les critères et mots bannis d'une recherche existante."""
     conn = getDbConnection()
     cursor = conn.cursor()
     cursor.execute("SELECT 1 FROM watchlist WHERE id = ?", (itemId,))
@@ -630,7 +554,8 @@ def updateWatchlistItem(itemId: int, data: WatchlistUpdate):
         conn.close()
 
 @app.delete("/watchlist/{itemId}", dependencies=[Depends(verifyApiKey)])
-def deleteFromWatchlist(itemId: int):
+async def deleteFromWatchlist(itemId: int):
+    """Supprime une recherche de la watchlist et supprime ses notifications Discord."""
     conn = getDbConnection()
     cursor = conn.cursor()
     cursor.execute("SELECT 1 FROM watchlist WHERE id = ?", (itemId,))
@@ -645,8 +570,7 @@ def deleteFromWatchlist(itemId: int):
         logger.info("Suppression automatique de %s messages Discord suite à la suppression de la recherche %s", len(rows), itemId)
         for (msg_id,) in rows:
             deleteDiscordMessage(DISCORD_WEBHOOK_URL, msg_id)
-            import time
-            time.sleep(randint(1, 3) * 0.8)
+            await asyncio.sleep(randint(1, 3) * 0.8)
             
     cursor.execute("DELETE FROM products WHERE watchlistId = ?", (itemId,))
     cursor.execute("DELETE FROM watchlist WHERE id = ?", (itemId,))
@@ -655,7 +579,8 @@ def deleteFromWatchlist(itemId: int):
     return apiResponse(True, data={"itemId": itemId})
 
 @app.post("/watchlist/{itemId}/purgeDiscord", dependencies=[Depends(verifyApiKey)])
-def purgeDiscordNotifications(itemId: int):
+async def purgeDiscordNotifications(itemId: int):
+    """Purge manuellement tous les messages Discord envoyés pour une recherche donnée."""
     conn = getDbConnection()
     cursor = conn.cursor()
     cursor.execute("SELECT 1 FROM watchlist WHERE id = ?", (itemId,))
@@ -673,7 +598,7 @@ def purgeDiscordNotifications(itemId: int):
             if deleteDiscordMessage(DISCORD_WEBHOOK_URL, msg_id):
                 deleted_count += 1
             cursor.execute("UPDATE products SET discordMessageId = NULL WHERE id = ?", (db_id,))
-            time.sleep(randint(1, 3) * 0.8)
+            await asyncio.sleep(randint(1, 3) * 0.8)
         conn.commit()
         
     conn.close()
@@ -681,10 +606,11 @@ def purgeDiscordNotifications(itemId: int):
 
 @app.get("/products")
 def getProducts():
+    """Retourne les 50 dernières annonces notifiées conservées en base de données."""
     conn = getDbConnection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT p.id, p.watchlistId, p.site, p.externalId, p.title, p.price, p.url, p.imageUrl, p.publishedAt, p.notifiedAt, w.keywords
+        SELECT p.id, p.watchlistId, p.site, p.externalId, p.title, p.price, p.url, p.imageUrl, p.publishedAt, p.notifiedAt, w.keywords, p.isSold
         FROM products p
         LEFT JOIN watchlist w ON p.watchlistId = w.id
         ORDER BY p.notifiedAt DESC LIMIT 50
@@ -703,7 +629,8 @@ def getProducts():
             "imageUrl": r[7],
             "publishedAt": r[8],
             "notifiedAt": r[9],
-            "query": r[10] or "Recherche inconnue"
+            "query": r[10] or "Recherche inconnue",
+            "isSold": bool(r[11]) if len(r) > 11 and r[11] is not None else False
         }
         for r in rows
     ]
@@ -711,25 +638,75 @@ def getProducts():
 
 @app.delete("/products/{productId}", dependencies=[Depends(verifyApiKey)])
 def deleteProduct(productId: int):
+    """Supprime une annonce notifiée et ajoute son ID externe à la banlist."""
     conn = getDbConnection()
     cursor = conn.cursor()
-    cursor.execute("SELECT discordMessageId FROM products WHERE id = ?", (productId,))
+    cursor.execute("SELECT site, externalId, discordMessageId FROM products WHERE id = ?", (productId,))
     row = cursor.fetchone()
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="Product not found")
         
-    msg_id = row[0]
+    site, externalId, msg_id = row
     if msg_id and DISCORD_WEBHOOK_URL:
         deleteDiscordMessage(DISCORD_WEBHOOK_URL, msg_id)
         
+    bannedAtStr = datetime.utcnow().isoformat()
+    cursor.execute(
+        "INSERT OR IGNORE INTO annonce_banlist (site, externalId, bannedAt) VALUES (?, ?, ?)",
+        (site, externalId, bannedAtStr)
+    )
     cursor.execute("DELETE FROM products WHERE id = ?", (productId,))
     conn.commit()
     conn.close()
     return apiResponse(True, data={"productId": productId})
 
+@app.post("/products/{productId}/check-availability", dependencies=[Depends(verifyApiKey)])
+async def checkProductAvailability(productId: int):
+    """Vérifie directement sur Vinted si l'annonce est toujours disponible ou vendue."""
+    conn = getDbConnection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, price, url, site, externalId FROM products WHERE id = ?", (productId,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Product not found")
+        
+    p_id, title, price, url, site, externalId = row
+    conn.close()
+
+    scraped_item = ScrapedItem(
+        externalId=externalId,
+        title=title,
+        price=price,
+        url=url,
+        site=site
+    )
+
+    import httpx
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=10.0) as client:
+        await scraped_item.fetchDescription(client)
+
+    is_sold = scraped_item.isSold
+
+    conn = getDbConnection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE products SET isSold = ? WHERE id = ?", (1 if is_sold else 0, productId))
+    conn.commit()
+    conn.close()
+
+    return apiResponse(True, data={
+        "productId": productId,
+        "isSold": is_sold,
+        "statusText": "Vendu / Épuisé" if is_sold else "Disponible"
+    })
+
 @app.post("/products/{productId}/reanalyze", dependencies=[Depends(verifyApiKey)])
-def reanalyzeProductWithAI(productId: int):
+async def reanalyzeProductWithAI(productId: int):
+    """Réévalue une annonce enregistrée via l'analyseur décisionnel LLM Ollama."""
     conn = getDbConnection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -746,15 +723,14 @@ def reanalyzeProductWithAI(productId: int):
     p_id, title, price, url, site, description, keywords, maxPrice = row
     conn.close()
     
-    # Appel synchrone/async à Ollama pour réévaluer l'annonce avec sa description sauvegardée
-    import asyncio
-    analysis, is_good_deal = asyncio.run(analyzeDealWithOllama(
+    # Appel asynchrone à Ollama pour réévaluer l'annonce avec sa description sauvegardée
+    analysis, is_good_deal = await analyzeDealWithOllama(
         title=title,
         price=price,
         maxPrice=maxPrice or 0.0,
         keywords=keywords or title,
         description=description
-    ))
+    )
     return apiResponse(True, data={
         "productId": productId,
         "is_good_deal": is_good_deal,
@@ -763,6 +739,7 @@ def reanalyzeProductWithAI(productId: int):
 
 @app.post("/purgeDB", dependencies=[Depends(verifyApiKey)])
 def purgeDatabase():
+    """Purge l'intégralité de la base de données (watchlist et annonces)."""
     try:
         deleteDB()
         return apiResponse(True, data={"status": "purged"})
@@ -771,15 +748,17 @@ def purgeDatabase():
 
 @app.post("/scan", dependencies=[Depends(verifyApiKey)])
 def triggerManualScan(background_tasks: BackgroundTasks):
+    """Déclenche un cycle de scan immédiat en arrière-plan."""
     background_tasks.add_task(runScan, force=True)
     return apiResponse(True, data={"status": "scan_started"})
 
 @app.get("/")
 def root():
+    """Endpoint racine confirmant le bon fonctionnement de l'API."""
     return apiResponse(True, data={"message": "API is running."})
 
 if __name__ == "__main__":
-    env_type = os.environ.get("ENVIRONEMENT_TYPE", "")
+    env_type = os.environ.get("ENVIRONMENT_TYPE", os.environ.get("ENVIRONEMENT_TYPE", ""))
     log_level = "critical" if env_type == "production" else "info"
     is_reload = env_type != "production"
     

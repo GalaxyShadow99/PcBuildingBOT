@@ -2,7 +2,7 @@ class ScrapedItem:
     """
     Classe représentant une annonce indépendamment du site
     """
-    def __init__(self, externalId, title, price, url, site, imageUrl=None, publishedAt=None, description=None):
+    def __init__(self, externalId, title, price, url, site, imageUrl=None, publishedAt=None, description=None, isSold=False):
         self.externalId = str(externalId)
         self.title = title
         self.price = float(price)
@@ -11,6 +11,7 @@ class ScrapedItem:
         self.imageUrl = imageUrl
         self.publishedAt = publishedAt
         self.description = description
+        self.isSold = bool(isSold)
 
     def isBroken(self) -> bool:
         """Détecte si le composant est en panne ou vendu pour pièces (inclut les modifs utilisateur)."""
@@ -41,7 +42,7 @@ class ScrapedItem:
         return False
 
     async def fetchDescription(self, client_or_page) -> bool:
-        """Charge la page de l'annonce Vinted et extrait la description depuis le bloc LD+JSON ou le DOM."""
+        """Charge la page de l'annonce Vinted et extrait la description et la disponibilité depuis LD+JSON."""
         import re
         import json
         try:
@@ -54,26 +55,37 @@ class ScrapedItem:
                     logger.warning("⏱️ Timeout ou interruption lors du chargement de %s : %s", self.url, goto_err)
                     return False
 
-                if response and response.status == 200:
-                    html = await page.content()
-                    ld_blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL)
-                    for block in ld_blocks:
-                        try:
-                            data = json.loads(block.strip())
-                            if isinstance(data, dict) and data.get("@type") == "Product":
-                                self.description = data.get("description", "")
-                                if self.description:
-                                    return True
-                        except Exception:
-                            continue
-                    
-                    desc_el = await page.query_selector('[itemprop="description"], [data-testid="item-description"], .item-description, [class*="item-description"]')
-                    if desc_el:
-                        self.description = (await desc_el.inner_text()).strip()
-                        return True
+                if response:
+                    if response.status == 404:
+                        self.isSold = True
+                        return False
+                    if response.status == 200:
+                        html = await page.content()
+                        ld_blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL)
+                        for block in ld_blocks:
+                            try:
+                                data = json.loads(block.strip())
+                                if isinstance(data, dict) and data.get("@type") == "Product":
+                                    self.description = data.get("description", "")
+                                    offers = data.get("offers", {}) or {}
+                                    avail = str(offers.get("availability", ""))
+                                    if "OutOfStock" in avail or "Sold" in avail:
+                                        self.isSold = True
+                                    if self.description:
+                                        return True
+                            except Exception:
+                                continue
+                        
+                        desc_el = await page.query_selector('[itemprop="description"], [data-testid="item-description"], .item-description, [class*="item-description"]')
+                        if desc_el:
+                            self.description = (await desc_el.inner_text()).strip()
+                            return True
             else:
                 client = client_or_page
                 response = await client.get(self.url, timeout=10)
+                if response.status_code == 404:
+                    self.isSold = True
+                    return False
                 if response.status_code == 200:
                     ld_blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', response.text, re.DOTALL)
                     for block in ld_blocks:
@@ -81,6 +93,10 @@ class ScrapedItem:
                             data = json.loads(block.strip())
                             if isinstance(data, dict) and data.get("@type") == "Product":
                                 self.description = data.get("description", "")
+                                offers = data.get("offers", {}) or {}
+                                avail = str(offers.get("availability", ""))
+                                if "OutOfStock" in avail or "Sold" in avail:
+                                    self.isSold = True
                                 return True
                         except Exception:
                             continue
@@ -109,7 +125,7 @@ class ScrapedItem:
         
         title = f"{self.title} | {self.price} €"
         if discount >= 15:
-            title = f"🔥 [{discount}% Off] {self.title}"
+            title = f"🔥 {self.title} | {self.price} €"
             
         color = 16737792 if discount >= 15 else 3447003
         shippingStatus = "Main propre uniquement (Pas d'envoi)" if self.requiresPickup() else "Envoi possible"
@@ -139,7 +155,7 @@ class ScrapedItem:
 
         if aiAnalysis:
             fields.append({
-                "name": "Analyse Qwen",
+                "name": "Analyse IA",
                 "value": aiAnalysis,
                 "inline": False
             })

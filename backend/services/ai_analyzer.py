@@ -23,6 +23,7 @@ client = AsyncOpenAI(
 
 
 class DealResponse(BaseModel):
+    """Schéma Pydantic de réponse JSON de l'analyseur LLM."""
     is_good_deal: bool
     reason: str
     short_advice: str
@@ -140,7 +141,7 @@ Sois très concis (1 phrase max par champ).
         
         raw_content = response.choices[0].message.content
         if not raw_content:
-            logger.warning("⚠️ Réponse vide reçue de llama-server.")
+            logger.warning("Réponse vide reçue de llama-server.")
             return None, None
 
         try:
@@ -148,7 +149,7 @@ Sois très concis (1 phrase max par champ).
         except Exception as val_err:
             import json
             import re
-            logger.warning("⚠️ Échec du parsing Pydantic direct, tentative de récupération du JSON : %s", val_err)
+            logger.warning("Échec du parsing Pydantic direct, tentative de récupération du JSON : %s", val_err)
             match = re.search(r'\{.*\}', raw_content, re.DOTALL)
             if match:
                 data = json.loads(match.group(0))
@@ -171,7 +172,7 @@ Sois très concis (1 phrase max par champ).
         return formatted_analysis, parsed.is_good_deal
 
     except Exception as e:
-        logger.warning("⚠️ Impossible d'analyser l'annonce avec llama-server sur %s : [%s] %s", LLAMA_HOST, type(e).__name__, e or repr(e))
+        logger.warning("⚠️ Impossible d'analyser l'annonce avec llama-server sur %s : [%s]", LLAMA_HOST, type(e).__name__)
         return None, None
 
 

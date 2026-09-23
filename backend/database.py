@@ -20,8 +20,10 @@ if not os.path.isabs(DB_PATH):
         DB_PATH = os.path.abspath(os.path.join(current_dir, DB_PATH))
 
 def getDbConnection():
-    """Retourne une connexion active SQLite standard (sans row_factory)."""
-    return sqlite3.connect(DB_PATH)
+    """Retourne une connexion active SQLite standard (sans row_factory) avec foreign_keys activés."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 def initDb():
     """Initialise la base de données et gère la migration automatique vers camelCase."""
@@ -86,7 +88,18 @@ def initDb():
             publishedAt TEXT,
             notifiedAt TEXT NOT NULL,
             discordMessageId TEXT,
+            isSold INTEGER DEFAULT 0,
             FOREIGN KEY (watchlistId) REFERENCES watchlist(id) ON DELETE CASCADE
+        )
+    """)
+    
+    # Table annonce_banlist (annonces bannies manuellement lors de la suppression)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS annonce_banlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            site TEXT NOT NULL,
+            externalId TEXT UNIQUE NOT NULL,
+            bannedAt TEXT NOT NULL
         )
     """)
     # Auto-migration propre pour s'assurer que toutes les colonnes requises existent sans empiler de try/except dispersés
@@ -99,6 +112,7 @@ def initDb():
     migrations = [
         ("products", "description", "ALTER TABLE products ADD COLUMN description TEXT"),
         ("products", "discordMessageId", "ALTER TABLE products ADD COLUMN discordMessageId TEXT"),
+        ("products", "isSold", "ALTER TABLE products ADD COLUMN isSold INTEGER DEFAULT 0"),
         ("watchlist", "useDefaultBannedWords", "ALTER TABLE watchlist ADD COLUMN useDefaultBannedWords INTEGER DEFAULT 1"),
         ("default_banned_words", "category", "ALTER TABLE default_banned_words ADD COLUMN category TEXT DEFAULT 'Build-Complet'")
     ]
@@ -165,6 +179,7 @@ def initDb():
 
 
 def listItems():
+    """Affiche la liste des éléments enregistrés dans la watchlist en console."""
     conn = getDbConnection()
     cursor = conn.cursor()
     cursor.execute("SELECT id, keywords, maxPrice, category, enabled FROM watchlist")
@@ -180,6 +195,7 @@ def listItems():
     print("===============================================\n")
 
 def addItem(keywords, maxPrice, category=15):
+    """Ajoute une nouvelle recherche à la watchlist via la console CLI."""
     conn = getDbConnection()
     cursor = conn.cursor()
     try:
@@ -195,6 +211,7 @@ def addItem(keywords, maxPrice, category=15):
         conn.close()
 
 def deleteItem(itemId):
+    """Supprime une recherche de la watchlist par son identifiant."""
     conn = getDbConnection()
     cursor = conn.cursor()
     try:
@@ -213,6 +230,7 @@ def deleteItem(itemId):
         conn.close()
 
 def deleteDB():
+    """Efface l'intégralité des tables products et watchlist de la base de données."""
     conn = getDbConnection()
     cursor = conn.cursor()
     try:

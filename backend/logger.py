@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ENVIRONEMENT_TYPE = os.environ.get("ENVIRONEMENT_TYPE", "development")
+ENVIRONMENT_TYPE = os.environ.get("ENVIRONMENT_TYPE", os.environ.get("ENVIRONEMENT_TYPE", "development"))
+ENVIRONEMENT_TYPE = ENVIRONMENT_TYPE  # Alias de rétrocompatibilité
 
 class CustomFormatter(logging.Formatter):
     grey = "\x1b[38;20m"
@@ -29,7 +30,7 @@ class CustomFormatter(logging.Formatter):
 
 logger = logging.getLogger("LBCBot")
 
-if ENVIRONEMENT_TYPE == "production":
+if ENVIRONMENT_TYPE == "production":
     logger.setLevel(logging.ERROR)
 else:
     logger.setLevel(logging.DEBUG)
@@ -43,7 +44,7 @@ if not logger.handlers:
 logger.propagate = False
 
 # Désactiver les logs HTTP verbeux de httpx
-if ENVIRONEMENT_TYPE == "production":
+if ENVIRONMENT_TYPE == "production":
     logging.getLogger("httpx").setLevel(logging.ERROR)
 else:
     logging.getLogger("httpx").setLevel(logging.WARNING)

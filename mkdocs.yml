@@ -1,0 +1,56 @@
+site_name: PcBuildingBOT - Documentation Technique
+site_description: Documentation du bot de surveillance et filtrage de composants PC
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Passer au mode sombre
+    - scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Passer au mode clair
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+use_directory_urls: false
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [backend, frontend]
+          options:
+            show_root_heading: true
+            show_source: true
+            heading_level: 3
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Vue d'Ensemble: index.md
+  - API REST Backend: api.md
+  - Base de Données: database.md
+  - Filtres Déterministes: filters.md
+  - Scraper Vinted & Modèles: scrapers.md
+  - Interface Web Frontend: frontend.md

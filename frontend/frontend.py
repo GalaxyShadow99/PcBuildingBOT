@@ -5,7 +5,17 @@ import urllib.request
 from functools import wraps
 
 from dotenv import load_dotenv
-from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import (
+    Flask,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    session,
+    url_for,
+)
 
 # Chargement du fichier .env pour le développement local
 load_dotenv()
@@ -29,6 +39,7 @@ if not API_SECRET_KEY:
     raise ValueError("API_SECRET_KEY is not set")
 
 def login_required(f):
+    """Décorateur restreignant l'accès aux utilisateurs authentifiés."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not session.get('loggedin'):
@@ -70,8 +81,8 @@ def apiCall(method: str, path: str, payload: dict = None, timeout: int = 5):
 
 @app.context_processor
 def inject_health():
+    """Injecte l'état de santé des scrapers dans toutes les vues Jinja2."""
     health = {
-        "leboncoin": {"status": "Inconnu", "last_scrape": None, "error": None},
         "vinted": {"status": "Inconnu", "last_scrape": None, "error": None}
     }
     status_h, res_h = apiCall("GET", "/health")
@@ -81,14 +92,16 @@ def inject_health():
 
 @app.route("/api/health")
 def apiHealthProxy():
+    """Proxy HTTP retournant l'état de santé du backend au format JSON."""
     status_h, res_h = apiCall("GET", "/health")
     if status_h == 200 and isinstance(res_h, dict):
         return jsonify(res_h.get("data", {}))
-    return jsonify({"leboncoin": {"status": "Erreur"}, "vinted": {"status": "Erreur"}})
+    return jsonify({"vinted": {"status": "Erreur"}})
 
 @app.route("/")
 @login_required
 def index():
+    """Affiche la page d'accueil avec le flux d'annonces notifiées."""
     products = []
     status, res = apiCall("GET", "/products")
     if status == 200 and isinstance(res, dict) and res.get("success"):
@@ -102,6 +115,7 @@ def index():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    """Gère l'affichage du formulaire de connexion et l'authentification de la session."""
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
@@ -122,15 +136,15 @@ def login():
 
 @app.route("/logout")
 def logout():
+    """Déconnecte l'utilisateur et réinitialise la session."""
     session.pop('loggedin', None)
     flash("Vous avez été déconnecté.", "info")
     return redirect(url_for("login"))
 
-
-
 @app.route("/watchlist")
 @login_required
 def watchlistView():
+    """Affiche la vue de gestion de la liste de surveillance (watchlist)."""
     watchlist = []
     presets = {}
     
@@ -147,9 +161,27 @@ def watchlistView():
         
     return render_template("watchlist.html", watchlist=watchlist, presets=presets)
 
+@app.route("/docs/", defaults={"filename": "index.html"})
+@app.route("/docs/<path:filename>")
+@login_required
+def serve_docs(filename):
+    """Sert la documentation technique statique MkDocs générée à la compilation."""
+    docs_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "site"))
+    if not os.path.exists(docs_dir):
+        docs_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "site"))
+
+    target_path = os.path.join(docs_dir, filename)
+    if os.path.isdir(target_path):
+        return send_from_directory(target_path, "index.html")
+    elif not os.path.exists(target_path) and os.path.exists(target_path + ".html"):
+        return send_from_directory(docs_dir, filename + ".html")
+
+    return send_from_directory(docs_dir, filename)
+
 @app.route("/watchlist/add", methods=["POST"])
 @login_required
 def addWatchlist():
+    """Traite le formulaire d'ajout d'une nouvelle recherche dans la watchlist."""
     keywords = request.form.get("keywords")
     maxPrice = request.form.get("max_price")
     category = request.form.get("category", 15)
@@ -181,6 +213,7 @@ def addWatchlist():
 @app.route("/watchlist/delete/<int:itemId>", methods=["POST"])
 @login_required
 def deleteWatchlist(itemId):
+    """Traite la demande de suppression d'une recherche de la watchlist."""
     status, res = apiCall("DELETE", f"/watchlist/{itemId}")
     if status == 200 and isinstance(res, dict) and res.get("success"):
         flash("Recherche supprimée avec succès.", "success")
@@ -193,6 +226,7 @@ def deleteWatchlist(itemId):
 @app.route("/watchlist/edit/<int:itemId>", methods=["POST"])
 @login_required
 def editWatchlist(itemId):
+    """Traite la modification des critères d'une recherche de la watchlist."""
     keywords = request.form.get("keywords")
     maxPrice = request.form.get("max_price")
     category = request.form.get("category", 15)
@@ -226,6 +260,7 @@ def editWatchlist(itemId):
 @app.route("/watchlist/purge-discord/<int:itemId>", methods=["POST"])
 @login_required
 def purgeDiscordWatchlist(itemId):
+    """Déclenche la purge des messages Discord associés à une recherche."""
     status, res = apiCall("POST", f"/watchlist/{itemId}/purgeDiscord")
     if status == 200 and isinstance(res, dict) and res.get("success"):
         deleted = res.get("data", {}).get("deleted_count", 0)
@@ -239,6 +274,7 @@ def purgeDiscordWatchlist(itemId):
 @app.route("/watchlist/toggle/<int:itemId>", methods=["POST"])
 @login_required
 def toggleWatchlist(itemId):
+    """Active ou désactive la surveillance d'une recherche dans la watchlist."""
     status, res = apiCall("PATCH", f"/watchlist/{itemId}/toggle")
     if status == 200 and isinstance(res, dict) and res.get("success"):
         enabled = res.get("data", {}).get("enabled", False)
@@ -253,6 +289,7 @@ def toggleWatchlist(itemId):
 @app.route("/scan", methods=["POST"])
 @login_required
 def triggerScan():
+    """Déclenche manuellement un scan global en tâche de fond via l'API."""
     status, res = apiCall("POST", "/scan")
     if status == 200 and isinstance(res, dict) and res.get("success"):
         flash("Scan manuel déclenché en tâche de fond !", "info")
@@ -265,6 +302,7 @@ def triggerScan():
 @app.route("/product/delete/<int:productId>", methods=["POST"])
 @login_required
 def deleteProductFrontend(productId):
+    """Supprime une annonce notifiée et bannit son ID externe via l'API."""
     status, res = apiCall("DELETE", f"/products/{productId}")
     if status == 200 and isinstance(res, dict) and res.get("success"):
         return jsonify({"success": True, "message": "Annonce supprimée"})
@@ -275,6 +313,7 @@ def deleteProductFrontend(productId):
 @app.route("/product/reanalyze/<int:productId>", methods=["POST"])
 @login_required
 def reanalyzeProductFrontend(productId):
+    """Réévalue une annonce enregistrée via l'analyseur IA Ollama."""
     status, res = apiCall("POST", f"/products/{productId}/reanalyze", timeout=60)
     if status == 200 and isinstance(res, dict) and res.get("success"):
         data = res.get("data", {})
@@ -283,9 +322,22 @@ def reanalyzeProductFrontend(productId):
         error_msg = res.get("error", "Échec de l'analyse") if isinstance(res, dict) else str(res)
         return jsonify({"success": False, "error": error_msg}), 400
 
+@app.route("/product/check-dispo/<int:productId>", methods=["POST"])
+@login_required
+def checkDispoProductFrontend(productId):
+    """Vérifie si une annonce est toujours disponible ou vendue sur Vinted."""
+    status, res = apiCall("POST", f"/products/{productId}/check-availability", timeout=15)
+    if status == 200 and isinstance(res, dict) and res.get("success"):
+        data = res.get("data", {})
+        return jsonify({"success": True, "data": data})
+    else:
+        error_msg = res.get("error", "Échec de la vérification") if isinstance(res, dict) else str(res)
+        return jsonify({"success": False, "error": error_msg}), 400
+
 @app.route("/purgeDB", methods=["POST"])
 @login_required
 def purgeDB():
+    """Déclenche l'effacement complet de la base de données via l'API."""
     status, res = apiCall("POST", "/purgeDB")
     if status == 200 and isinstance(res, dict) and res.get("success"):
         flash("Base de données effacée avec succès.", "success")
@@ -296,22 +348,25 @@ def purgeDB():
 
 @app.errorhandler(404)
 def page_not_found(e):
+    """Rend la page d'erreur HTTP 404."""
     return render_template("errors/404.html"), 404
 
 @app.errorhandler(403)
 def access_forbidden(e):
+    """Rend la page d'erreur HTTP 403."""
     return render_template("errors/403.html"), 403
 
 @app.errorhandler(500)
 def internal_server_error(e):
+    """Rend la page d'erreur HTTP 500."""
     return render_template("errors/500.html"), 500
 
 if __name__ == "__main__":
-    env_type = os.environ.get("ENVIRONEMENT_TYPE", "")
+    env_type = os.environ.get("ENVIRONMENT_TYPE", os.environ.get("ENVIRONEMENT_TYPE", ""))
     is_prod = env_type == "production"
     
     if is_prod:
         import logging
-        logging.getLogger('werkzeug').setLevel(logging.ERROR)
+        logging.getLogger('werkzeug').setLevel(logging.INFO)
         
     app.run(host="0.0.0.0", port=5000, debug=not is_prod)
