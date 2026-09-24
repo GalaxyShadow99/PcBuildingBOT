@@ -19,7 +19,7 @@ def sendDiscordNotification(webhookUrl: str, payload: dict) -> str:
     try:
         response = httpx.post(url, json=payload, timeout=10)
         if response.status_code in [200, 204]:
-            logger.info("Notification Discord envoyée avec succès.")
+            logger.debug("Notification Discord envoyée avec succès.")
             try:
                 data = response.json()
                 return data.get("id")
@@ -57,7 +57,7 @@ def deleteDiscordMessage(webhookUrl: str, messageId: str) -> bool:
             response = httpx.delete(delete_url, timeout=10)  # Retente la suppression
             
         if response.status_code == 204:
-            logger.info("Message Discord %s supprimé du canal.", messageId)
+            logger.debug("Message Discord %s supprimé du canal.", messageId)
             return True
         else:
             logger.error("Échec de la suppression du message Discord %s. Code statut : %s, Réponse : %s", messageId, response.status_code, response.text)

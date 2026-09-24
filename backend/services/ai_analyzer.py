@@ -161,7 +161,7 @@ Sois très concis (1 phrase max par champ).
             else:
                 raise val_err
 
-        logger.info("[Llama Analysis OK] Valide: %s | Raison: %s", parsed.is_good_deal, parsed.reason)
+        logger.debug("[Llama Analysis OK] Valide: %s | Raison: %s", parsed.is_good_deal, parsed.reason)
         
         status_icon = "Bonne affaire" if parsed.is_good_deal else "À éviter"
         formatted_analysis = (

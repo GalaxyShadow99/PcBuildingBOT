@@ -25,7 +25,7 @@ class VintedScraper:
             "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
         }
 
-        logger.info("[Vinted-Scraper] Recherche en cours: '%s' (max %s pages)", query, maxPages)
+        logger.debug("[Vinted-Scraper] Recherche en cours: '%s' (max %s pages)", query, maxPages)
         formattedItems = []
         encodedQuery = urllib.parse.quote_plus(query)
 
@@ -37,7 +37,7 @@ class VintedScraper:
                 seen_ids = set()
 
                 for page_num in range(1, maxPages + 1):
-                    logger.info("   - Chargement de la page Vinted %s...", page_num)
+                    logger.debug("   - Chargement de la page Vinted %s...", page_num)
                     url = f"https://www.vinted.fr/catalog?search_text={encodedQuery}&order=newest_first&page={page_num}&status_ids[]=6&status_ids[]=1&status_ids[]=2"
                     if maxPrice and float(maxPrice) > 0:
                         url += f"&price_to={float(maxPrice)}"
@@ -54,7 +54,7 @@ class VintedScraper:
                     links = soup.find_all("a", href=re.compile(r"/items/\d+"))
 
                     if not links:
-                        logger.info("   - Fin des résultats Vinted sur la page %s.", page_num)
+                        logger.debug("   - Fin des résultats Vinted sur la page %s.", page_num)
                         break
 
                     page_items = []
@@ -123,14 +123,14 @@ class VintedScraper:
                             page_items.append(scraped_item)
 
                     for scraped_item in page_items:
-                        logger.info("   - Chargement de la description Vinted : '%s' (%s €)", scraped_item.title, scraped_item.price)
+                        logger.debug("   - Chargement de la description Vinted : '%s' (%s €)", scraped_item.title, scraped_item.price)
                         await scraped_item.fetchDescription(client)
                         await asyncio.sleep(randint(100, 300) / 1000.0)
                         formattedItems.append(scraped_item)
 
                     await asyncio.sleep(randint(300, 800) / 1000.0)
 
-                logger.info("[Vinted-Scraper] %s annonces extraites avec succès au total.", len(formattedItems))
+                logger.debug("[Vinted-Scraper] %s annonces extraites avec succès au total.", len(formattedItems))
                 return formattedItems
 
         except Exception as e:

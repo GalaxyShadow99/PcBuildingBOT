@@ -31,7 +31,7 @@ class CustomFormatter(logging.Formatter):
 logger = logging.getLogger("LBCBot")
 
 if ENVIRONMENT_TYPE == "production":
-    logger.setLevel(logging.ERROR)
+    logger.setLevel(logging.INFO)
 else:
     logger.setLevel(logging.DEBUG)
 

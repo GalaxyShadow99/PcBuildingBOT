@@ -217,7 +217,7 @@ def cleanupOldDiscordMessages():
 
 async def runScan(force: bool = False):
     """Effectue un cycle de scan sur toute la watchlist active"""
-    logger.info("Début du cycle de scan global...")
+    logger.debug("Début du cycle de scan global...")
     start_time = time.perf_counter()
     # Récupération des recherches actives en unpacking de tuples
     conn = getDbConnection()
@@ -231,11 +231,11 @@ async def runScan(force: bool = False):
     conn.close()
     
     if not activeItems:
-        logger.info("Aucune recherche active dans la watchlist.")
+        logger.debug("Aucune recherche active dans la watchlist.")
         return
      
     for itemId, keywords, maxPrice, category, useDefaultBannedWords in activeItems:
-        logger.info("Scan de '%s' (max %s€)...", keywords, maxPrice)
+        logger.debug("Scan de '%s' (max %s€)...", keywords, maxPrice)
         
         # Récupération des mots bannis spécifiques pour cette recherche
         conn = getDbConnection()
@@ -284,7 +284,7 @@ async def runScan(force: bool = False):
                     
             # 1. Exclusion automatique du matériel HS / panne
             if ad.isBroken():
-                logger.warning("[Filtre HS/Boîte] Annonce de matériel défectueux ou emballage ignorée : '%s'", ad.title)
+                logger.debug("[Filtre HS/Boîte] Annonce de matériel défectueux ou emballage ignorée : '%s'", ad.title)
                 continue
 
             # 1b. Exclusion dynamique via banlist (globale + spécifique)
@@ -302,7 +302,7 @@ async def runScan(force: bool = False):
                     break
                         
             if banned_match:
-                logger.warning("[Filtre Banword] Annonce contenant le mot banni (%s) ignorée : '%s'", banned_match, ad.title)
+                logger.debug("[Filtre Banword] Annonce contenant le mot banni (%s) ignorée : '%s'", banned_match, ad.title)
                 continue
 
             # 1bb. Détection spécifique des boîtes / emballages vides (multi-langues)
@@ -315,23 +315,23 @@ async def runScan(force: bool = False):
                         isBox = True
                         break
             if isBox:
-                logger.warning("[Filtre Boîte] Annonce d'emballage vide suspectée ignorée : '%s'", ad.title)
+                logger.debug("[Filtre Boîte] Annonce d'emballage vide suspectée ignorée : '%s'", ad.title)
                 continue
 
             # 1c. Vérification de la pertinence de la catégorie du composant (Soft Match)
             if not checkTitleRelevance(titleLower, queryLower):
-                logger.warning("[Filtre Catégorie] Annonce exclue car hors-sujet : '%s'", ad.title)
+                logger.debug("[Filtre Catégorie] Annonce exclue car hors-sujet : '%s'", ad.title)
                 continue
 
             # 1d. Vérification déterministe des modèles (Chipsets H610/B85, DDR3/DDR4, SODIMM)
             if not checkHardwareModelCompatibility(titleLower, queryLower, descriptionLower=ad.description or ""):
-                logger.warning("[Filtre Modèle/Chipset] Annonce exclue car modèle/chipset non correspondant : '%s'", ad.title)
+                logger.debug("[Filtre Modèle/Chipset] Annonce exclue car modèle/chipset non correspondant : '%s'", ad.title)
                 continue
 
             # 2. Détection des doublons et des annonces bannies manuellement en pur SQL
             cursor.execute("SELECT 1 FROM annonce_banlist WHERE externalId = ?", (ad.externalId,))
             if cursor.fetchone():
-                logger.warning("[Filtre Banlist Annonce] Annonce bannie manuellement ignorée : '%s'", ad.title)
+                logger.debug("[Filtre Banlist Annonce] Annonce bannie manuellement ignorée : '%s'", ad.title)
                 continue
 
             cursor.execute("SELECT 1 FROM products WHERE externalId = ?", (ad.externalId,))
@@ -339,11 +339,11 @@ async def runScan(force: bool = False):
                 continue
 
             if getattr(ad, "isSold", False):
-                logger.warning("[Filtre Dispo] Annonce déjà vendue / indisponible sur Vinted, ignorée : '%s'", ad.title)
+                logger.debug("[Filtre Dispo] Annonce déjà vendue / indisponible sur Vinted, ignorée : '%s'", ad.title)
                 continue
                 
             # 3. Analyse IA ciblée par Ollama/Llama (avec filtrage binaire is_good_deal)
-            logger.info("[Analyse IA] Interrogation de llama-server pour '%s' (%s€)...", ad.title, ad.price)
+            logger.debug("[Analyse IA] Interrogation de llama-server pour '%s' (%s€)...", ad.title, ad.price)
             try:
                 aiAnalysis, aiIsGoodDeal = await analyzeDealWithOllama(
                     title=ad.title,
@@ -358,12 +358,13 @@ async def runScan(force: bool = False):
             
             # Si l'IA refuse (is_good_deal = False) OU si LLM est en erreur (aiIsGoodDeal is None), on bloque la notification Discord et on continue !
             if aiIsGoodDeal is not True:
-                logger.warning("[Filtre IA/Erreur] Annonce non retenue (is_good_deal=%s) : '%s'", aiIsGoodDeal, ad.title)
+                logger.info("[IA Refusé] Annonce '%s' (%s €) | URL: %s | Raison: %s", ad.title, ad.price, ad.url, aiAnalysis or "Annonce refusée par l'IA")
                 continue
             
             # 4. Formatage et envoi de l'embed riche sur Discord
             embedPayload = ad.toDiscordEmbed(maxPrice, keywords, aiAnalysis=aiAnalysis)
             msgId = sendDiscordNotification(DISCORD_WEBHOOK_URL, embedPayload)
+            logger.info("[Notification Discord Envoyée] '%s' (%s €) | URL: %s | Résumé IA: %s", ad.title, ad.price, ad.url, aiAnalysis or "Aucun résumé")
             
             # 5. Enregistrement en base de données avec le message ID Discord et la description complète
             notifiedAtStr = datetime.utcnow().isoformat()
@@ -391,7 +392,7 @@ async def runScan(force: bool = False):
             await asyncio.sleep(randint(1, 5)) # Pause anti-rate-limit Discord
             
         conn.close()
-        logger.info("Terminé. %s nouvelles annonces sous le prix max.", newFinds)
+        logger.debug("Terminé. %s nouvelles annonces sous le prix max.", newFinds)
         
         # Nettoyage des anciens messages Discord après chaque recherche
         cleanupOldDiscordMessages()
@@ -701,7 +702,7 @@ async def checkProductAvailability(productId: int):
     return apiResponse(True, data={
         "productId": productId,
         "isSold": is_sold,
-        "statusText": "Vendu / Épuisé" if is_sold else "Disponible"
+        "statusText": "Vendu / Plus dispo" if is_sold else "Disponible"
     })
 
 @app.post("/products/{productId}/reanalyze", dependencies=[Depends(verifyApiKey)])
