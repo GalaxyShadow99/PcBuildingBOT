@@ -39,7 +39,7 @@ def checkTitleRelevance(titleLower: str, queryLower: str) -> bool:
         "motherboard": ["carte mere", "carte mère", "motherboard", "mobo", "b450", "b550", "x570", "am4"],
         "ram": ["ram", "ddr", "memoire", "mémoire"],
         "storage": ["ssd", "hdd", "disque dur", "disque"],
-        "alim": ["alim", "alimentation", "power supply"],
+        "alim": ["alim", "alimentation", "power supply", "psu", "netzteil"],
         "case": ["boitier", "boîtier", "case", "tour"]
     }
     
@@ -68,7 +68,7 @@ def checkTitleRelevance(titleLower: str, queryLower: str) -> bool:
         "motherboard": ["carte", "mere", "mère", "motherboard", "mobo"],
         "ram": ["ram", "ddr", "memoire", "mémoire", "go"],
         "storage": ["ssd", "hdd", "disque", "dur", "to", "go"],
-        "alim": ["alim", "alimentation", "power", "supply", "watt", "watts"],
+        "alim": ["alim", "alimentation", "power", "supply", "watt", "watts", "psu", "netzteil"],
         "case": ["boitier", "boîtier", "case", "tour"]
     }
     
