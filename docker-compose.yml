@@ -8,6 +8,7 @@ services:
     container_name: pcbot_backend
     restart: unless-stopped
     environment:
+      - ENVIRONMENT_TYPE=${ENVIRONMENT_TYPE:-production}
       - DATABASE_PATH=/app/data/database.db
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:8080}

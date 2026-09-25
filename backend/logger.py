@@ -43,8 +43,10 @@ if not logger.handlers:
     logger.addHandler(ch)
 logger.propagate = False
 
-# Désactiver les logs HTTP verbeux de httpx
+# Désactiver les logs HTTP verbeux de httpx et uvicorn.access en production
 if ENVIRONMENT_TYPE == "production":
     logging.getLogger("httpx").setLevel(logging.ERROR)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 else:
     logging.getLogger("httpx").setLevel(logging.WARNING)

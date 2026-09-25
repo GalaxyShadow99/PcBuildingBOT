@@ -328,10 +328,10 @@ async def runScan(force: bool = False):
                 logger.debug("[Filtre Modèle/Chipset] Annonce exclue car modèle/chipset non correspondant : '%s'", ad.title)
                 continue
 
-            # 2. Détection des doublons et des annonces bannies manuellement en pur SQL
+            # 2. Détection des doublons et des annonces bannies/déjà traitées en SQL
             cursor.execute("SELECT 1 FROM annonce_banlist WHERE externalId = ?", (ad.externalId,))
             if cursor.fetchone():
-                logger.debug("[Filtre Banlist Annonce] Annonce bannie manuellement ignorée : '%s'", ad.title)
+                logger.debug("[Filtre Banlist Annonce] Annonce déjà traitée/bannie ignorée : '%s'", ad.title)
                 continue
 
             cursor.execute("SELECT 1 FROM products WHERE externalId = ?", (ad.externalId,))
@@ -356,9 +356,16 @@ async def runScan(force: bool = False):
                 logger.error("[Analyse IA] Exception imprévue lors de l'appel LLM : %s", ai_err)
                 aiAnalysis, aiIsGoodDeal = None, None
             
-            # Si l'IA refuse (is_good_deal = False) OU si LLM est en erreur (aiIsGoodDeal is None), on bloque la notification Discord et on continue !
+            # Si l'IA refuse (is_good_deal = False) OU si LLM est en erreur (aiIsGoodDeal is None), on bloque la notification Discord
+            # et on enregistre l'externalId dans annonce_banlist pour ne plus JAMAIS ré-analyser cette ancienne annonce !
             if aiIsGoodDeal is not True:
                 logger.info("[IA Refusé] Annonce '%s' (%s €) | URL: %s | Raison: %s", ad.title, ad.price, ad.url, aiAnalysis or "Annonce refusée par l'IA")
+                bannedAtStr = datetime.utcnow().isoformat()
+                cursor.execute(
+                    "INSERT OR IGNORE INTO annonce_banlist (site, externalId, bannedAt) VALUES (?, ?, ?)",
+                    (ad.site, ad.externalId, bannedAtStr)
+                )
+                conn.commit()
                 continue
             
             # 4. Formatage et envoi de l'embed riche sur Discord
