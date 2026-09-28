@@ -76,7 +76,7 @@
                                         <div class="mb-3">
                                             <label for="customBannedWords{{ item.id }}" class="form-label text-secondary small fw-bold">Mots-clés à exclure (séparés par virgules)</label>
                                             <input type="text" class="form-control form-control-sm" id="customBannedWords{{ item.id }}" name="custom_banned_words" value="{{ item.customBannedWords | join(', ') }}" placeholder="ex: ventirad, waterblock, hs">
-                                            <div class="mt-2">
+                                             <div class="mt-2">
                                                 <small class="text-muted d-block mb-1" style="font-size: 0.68rem;">Ajout rapide :</small>
                                                 <div class="d-flex flex-wrap gap-1">
                                                     {% if presets %}

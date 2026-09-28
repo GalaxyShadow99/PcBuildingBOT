@@ -81,27 +81,30 @@ let activeSiteFilter = 'all';
 let activeQueryFilter = 'all';
 
 
-// Générer dynamiquement les boutons de filtres de recherches à partir des cartes présentes
+// Générer dynamiquement les boutons de filtres de recherches et lancer la vérification automatique de disponibilité
 document.addEventListener("DOMContentLoaded", () => {
     const filterContainer = document.getElementById("query-filters");
-    if (!filterContainer) return;
-    
-    const cards = document.querySelectorAll(".product-card");
-    const uniqueQueries = new Set();
-    cards.forEach(card => {
-        const q = card.getAttribute("data-query");
-        if (q) uniqueQueries.add(q);
-    });
-    
-    uniqueQueries.forEach(q => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "btn btn-outline-secondary btn-sm py-0 px-2";
-        btn.style.fontSize = "0.75rem";
-        btn.textContent = q;
-        btn.onclick = function() { filterProductsByQuery(q, this); };
-        filterContainer.appendChild(btn);
-    });
+    if (filterContainer) {
+        const cards = document.querySelectorAll(".product-card");
+        const uniqueQueries = new Set();
+        cards.forEach(card => {
+            const q = card.getAttribute("data-query");
+            if (q) uniqueQueries.add(q);
+        });
+        
+        uniqueQueries.forEach(q => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "btn btn-outline-secondary btn-sm py-0 px-2";
+            btn.style.fontSize = "0.75rem";
+            btn.textContent = q;
+            btn.onclick = function() { filterProductsByQuery(q, this); };
+            filterContainer.appendChild(btn);
+        });
+    }
+
+    // Vérification automatique en tâche de fond de la disponibilité de toutes les annonces
+    autoCheckAllDispo();
 });
 
 function filterProductsBySite(site, btn) {
@@ -209,6 +212,51 @@ function checkProductDispo(productId, btn) {
         btn.textContent = origText;
         alert("Erreur réseau : " + err);
     });
+}
+
+function autoCheckAllDispo() {
+    const dispoBtns = document.querySelectorAll("[id^='dispo-btn-']");
+    if (!dispoBtns.length) return;
+    
+    const btnArray = Array.from(dispoBtns);
+    const batchSize = 3;
+    
+    async function processQueue() {
+        for (let i = 0; i < btnArray.length; i += batchSize) {
+            const batch = btnArray.slice(i, i + batchSize);
+            await Promise.all(batch.map(btn => {
+                const productId = btn.id.replace("dispo-btn-", "");
+                const badge = document.getElementById(`dispo-badge-${productId}`);
+                if (badge && badge.textContent.trim() === "Vendu") {
+                    return Promise.resolve();
+                }
+                btn.disabled = true;
+                const origText = btn.textContent;
+                btn.textContent = "...";
+                
+                return fetch(`/product/check-dispo/${productId}`, { method: 'POST' })
+                    .then(r => r.json())
+                    .then(res => {
+                        btn.disabled = false;
+                        btn.textContent = origText;
+                        if (res.success && res.data && badge) {
+                            if (res.data.isSold) {
+                                badge.className = "badge bg-danger";
+                                badge.textContent = "Vendu";
+                            } else {
+                                badge.className = "badge bg-success";
+                                badge.textContent = "Disponible";
+                            }
+                        }
+                    })
+                    .catch(() => {
+                        btn.disabled = false;
+                        btn.textContent = origText;
+                    });
+            }));
+        }
+    }
+    processQueue();
 }
 
 function applyCombinedFilters() {

@@ -13,15 +13,6 @@
                 <input type="number" step="5" start="20" id="max_price" name="max_price" required placeholder="ex: 220" class="form-control form-control-sm">
             </div>
             <div class="mb-3">
-                <label for="category" class="form-label text-secondary small fw-bold">Catégorie LBC</label>
-                <select id="category" name="category" class="form-select form-select-sm">
-                    <option value="15">Informatique (15)</option>
-                    <option value="16">Consoles & Jeux vidéo (16)</option>
-                    <option value="9">Téléphonie (9)</option>
-                    <option value="22">Image & Son (22)</option>
-                </select>
-            </div>
-            <div class="mb-3">
                 <label for="custom_banned_words" class="form-label text-secondary small fw-bold">Mots-clés à exclure (séparés par des virgules)</label>
                 <input type="text" id="custom_banned_words" name="custom_banned_words" placeholder="ex: ventirad, waterblock, hs, boite" class="form-control form-control-sm">
                 
@@ -65,7 +56,7 @@
                 const input = document.getElementById(inputId);
                 if (!input) return;
                 let current = input.value.trim();
-                const newWords = wordsString.split(',').map(w => w.strip ? w.strip() : w.trim());
+                const newWords = wordsString.split(',').map(w => w.trim());
                 
                 let existing = current ? current.split(',').map(w => w.trim()) : [];
                 newWords.forEach(w => {

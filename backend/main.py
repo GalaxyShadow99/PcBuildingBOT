@@ -328,14 +328,14 @@ async def runScan(force: bool = False):
                 logger.debug("[Filtre Modèle/Chipset] Annonce exclue car modèle/chipset non correspondant : '%s'", ad.title)
                 continue
 
-            # 2. Détection des doublons et des annonces bannies/déjà traitées en SQL
-            cursor.execute("SELECT 1 FROM annonce_banlist WHERE externalId = ?", (ad.externalId,))
+            # 2. Détection stricte en SQL pur : toute annonce déjà notifiée (products) ou bannie (annonce_banlist) ne doit JAMAIS être réenvoyée
+            cursor.execute("""
+                SELECT 1 FROM products WHERE externalId = ? OR url = ?
+                UNION ALL
+                SELECT 1 FROM annonce_banlist WHERE externalId = ?
+            """, (ad.externalId, ad.url, ad.externalId))
             if cursor.fetchone():
-                logger.debug("[Filtre Banlist Annonce] Annonce déjà traitée/bannie ignorée : '%s'", ad.title)
-                continue
-
-            cursor.execute("SELECT 1 FROM products WHERE externalId = ?", (ad.externalId,))
-            if cursor.fetchone():
+                logger.debug("[Filtre SQL Anti-Doublon] Annonce déjà envoyée ou bannie ignorée : '%s' (ID: %s)", ad.title, ad.externalId)
                 continue
 
             if getattr(ad, "isSold", False):
@@ -373,10 +373,10 @@ async def runScan(force: bool = False):
             msgId = sendDiscordNotification(DISCORD_WEBHOOK_URL, embedPayload)
             logger.info("[Notification Discord Envoyée] '%s' (%s €) | URL: %s | Résumé IA: %s", ad.title, ad.price, ad.url, aiAnalysis or "Aucun résumé")
             
-            # 5. Enregistrement en base de données avec le message ID Discord et la description complète
+            # 5. Enregistrement en base de données avec verrouillage SQL UNIQUE (INSERT OR IGNORE)
             notifiedAtStr = datetime.utcnow().isoformat()
             cursor.execute("""
-                INSERT INTO products 
+                INSERT OR IGNORE INTO products 
                 (watchlistId, site, externalId, title, price, url, imageUrl, description, publishedAt, notifiedAt, discordMessageId, isSold)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
@@ -405,8 +405,46 @@ async def runScan(force: bool = False):
         cleanupOldDiscordMessages()
         
         await asyncio.sleep(5)
+
+    # Auto-vérification de la disponibilité des annonces enregistrées en BDD
+    try:
+        await updateActiveProductsAvailability()
+    except Exception as dispo_err:
+        logger.debug("Erreur lors de l'auto-vérification de disponibilité : %s", dispo_err)
+
     end_time = time.perf_counter()
     logger.info(f"Fin du cycle de scan global | Durée : {end_time - start_time:0.4f} sec ")
+
+async def updateActiveProductsAvailability():
+    """Vérifie automatiquement en tâche de fond la disponibilité des annonces actives en BDD (isSold = 0)."""
+    conn = getDbConnection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, externalId, title, price, url, site FROM products WHERE isSold = 0 ORDER BY notifiedAt DESC LIMIT 20")
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        return
+
+    logger.debug("Vérification automatique de la disponibilité pour %s annonces...", len(rows))
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=8.0) as client:
+        for p_id, externalId, title, price, url, site in rows:
+            scraped_item = ScrapedItem(externalId=externalId, title=title, price=price, url=url, site=site)
+            try:
+                await scraped_item.fetchDescription(client)
+                if scraped_item.isSold:
+                    conn = getDbConnection()
+                    c = conn.cursor()
+                    c.execute("UPDATE products SET isSold = 1 WHERE id = ?", (p_id,))
+                    conn.commit()
+                    conn.close()
+                    logger.info("🏷️ Annonce automatiquement mise à jour comme VENDUE : '%s'", title)
+            except Exception as err:
+                logger.debug("Erreur vérification dispo : %s", err)
+            await asyncio.sleep(0.3)
 
 async def runPeriodicScans():
     while True:
