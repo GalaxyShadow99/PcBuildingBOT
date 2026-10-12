@@ -105,6 +105,46 @@ class ScrapedItem:
             logger.warning("❌ Erreur lors de la récupération de la description Vinted : %s", e)
         return False
 
+    async def isStillAvailable(self, client_or_page) -> bool:
+        """Vérifie si la page contient l'indicateur Vinted « Vendu ».
+
+        ``client_or_page`` peut être un ``httpx.AsyncClient`` ou une page
+        Playwright, comme pour :meth:`fetchDescription`.
+        """
+        from bs4 import BeautifulSoup
+
+        if hasattr(client_or_page, "goto"):
+            response = await client_or_page.goto(
+                self.url,
+                wait_until="domcontentloaded",
+                timeout=10000,
+            )
+            if response is None:
+                return True
+            if response.status == 404:
+                self.isSold = True
+                return False
+            if response.status != 200:
+                raise RuntimeError(
+                    f"Erreur HTTP {response.status} lors de la vérification de {self.url}"
+                )
+            html = await client_or_page.content()
+        else:
+            response = await client_or_page.get(self.url, timeout=10)
+            if response.status_code == 404:
+                self.isSold = True
+                return False
+            if response.status_code != 200:
+                response.raise_for_status()
+            html = response.text
+
+        soup = BeautifulSoup(html, "html.parser")
+        sold_element = soup.find("div", class_="web_ui__Cell__body", string=lambda value: (
+            value is not None and value.strip().casefold() == "vendu"
+        ))
+        self.isSold = sold_element is not None
+        return not self.isSold
+
     def getDealPercentage(self, maxPrice: float) -> int:
         """Calcule le pourcentage d'économie réalisé par rapport au budget max."""
         if maxPrice <= 0:

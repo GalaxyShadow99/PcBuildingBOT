@@ -434,8 +434,8 @@ async def updateActiveProductsAvailability():
         for p_id, externalId, title, price, url, site in rows:
             scraped_item = ScrapedItem(externalId=externalId, title=title, price=price, url=url, site=site)
             try:
-                await scraped_item.fetchDescription(client)
-                if scraped_item.isSold:
+                is_available = await scraped_item.isStillAvailable(client)
+                if not is_available:
                     conn = getDbConnection()
                     c = conn.cursor()
                     c.execute("UPDATE products SET isSold = 1 WHERE id = ?", (p_id,))
