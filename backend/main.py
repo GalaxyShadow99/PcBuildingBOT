@@ -452,7 +452,7 @@ async def runPeriodicScans():
             await runScan()
         except Exception as e:
             logger.exception("Erreur critique dans runPeriodicScans : %s", e, exc_info=True)
-        await asyncio.sleep(60*2) # pause de 2 minutes 
+        await asyncio.sleep(60*6+30) # pause de 6 m 30s 
 
 @app.get("/health")
 def getHealth():
